@@ -293,8 +293,8 @@ app.use((error, request, response, next) => {
 
 async function start() {
   await initializeDatabase();
-  const server = app.listen(config.port, "127.0.0.1", () => {
-    console.log(`Current is running at http://localhost:${config.port}`);
+  const server = app.listen(config.port, "0.0.0.0", () => {
+    console.log(`Current is listening on port ${config.port}`);
   });
   const shutdown = () => {
     server.close(() => pool.end().finally(() => process.exit(0)));

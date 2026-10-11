@@ -7,10 +7,11 @@
     "node": ">=20"
   },
   "scripts": {
-    "start": "node --env-file=.env server.js",
-    "db:init": "node --env-file=.env server/init-db.js"
+    "start": "node server.js",
+    "db:init": "node server/init-db.js"
   },
   "dependencies": {
+    "dotenv": "^16.6.1",
     "express": "^5.1.0",
     "pg": "^8.16.3"
   }
