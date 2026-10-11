@@ -11,7 +11,7 @@ The website uses a local PostgreSQL database in the `electrician` schema. Config
 5. Run `npm run db:init` to create the schema and tables, or skip this step because `npm start` initializes them automatically.
 6. Run `npm start` and open <http://localhost:3000>.
 
-The `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD` settings correspond to the PostgreSQL server connection. `DB_SCHEMA` chooses the PostgreSQL schema that contains the app tables.
+Set either `DATABASE_URL` to a PostgreSQL connection URL, or configure `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD` separately. `DB_SCHEMA` chooses the schema that contains the app tables and defaults to `electrician`. `DB_SSL=true` enables certificate-validated TLS; in production TLS is enabled by default unless `DB_SSL=false` is explicitly set.
 
 ## Database tables
 
@@ -28,23 +28,19 @@ Keep `.env` private and do not commit database credentials. The included credent
 This is a free-tier demo setup, not production hosting. Free hosting can sleep, pause, or have limited storage; check the provider's current limits before deploying.
 
 1. Push the project to a GitHub repository. Confirm `.env` is ignored by Git and do not push it.
-2. Create a free PostgreSQL project on [Supabase](https://supabase.com/). In its **Connect** dialog, choose **Session pooler** and copy the host, port, database, and username from the connection details. Set a strong database password.
+2. Create a free PostgreSQL project on [Supabase](https://supabase.com/). In its **Connect** dialog, choose **Session pooler** and copy the full PostgreSQL connection string. Set a strong database password.
 3. In Supabase's SQL editor, run `server/schema.sql` after replacing both occurrences of `__SCHEMA__` with `"electrician"`. This creates the application tables without needing the deployed server to have schema-creation privileges.
 4. Create a free **Web Service** on [Render](https://render.com/) and connect the GitHub repository. Use these settings:
    - **Build command:** `npm install`
    - **Start command:** `npm start`
    - **Health check path:** `/api/health`
    - **Plan:** Free
-5. In the Render service's **Environment** settings, add the database connection values from Supabase:
-   - `DB_HOST`: the session-pooler host shown by Supabase
-   - `DB_PORT`: the session-pooler port shown by Supabase
-   - `DB_NAME`: the database name shown by Supabase
-   - `DB_USER`: the session-pooler username shown by Supabase
-   - `DB_PASSWORD`: your Supabase database password
+5. In the Render service's **Environment** settings, add:
+   - `DATABASE_URL`: the full session-pooler connection string from Supabase
    - `DB_SCHEMA`: `electrician`
    - `DB_SSL`: `true`
    - `NODE_ENV`: `production`
    - `PORT` is supplied by Render; do not set it manually.
 6. Save the variables and deploy. Open the Render URL and check that `/api/health` returns `{"status":"ok","database":"connected"}`.
 
-Use the exact Supabase pooler values from its dashboard; the pooler username is different from the local `postgres` user. Free Render web services sleep after inactivity; free Supabase projects can pause after a week of inactivity and have a 500 MB database limit. Render's free PostgreSQL database expires after 30 days, so this guide uses Supabase for the database instead.
+Use the exact connection string from Supabase; its pooler username is different from the local `postgres` user. Alternatively, set `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD` as separate Render environment variables. Free Render web services sleep after inactivity; free Supabase projects can pause after a week of inactivity and have a 500 MB database limit. Render's free PostgreSQL database expires after 30 days, so this guide uses Supabase for the database instead.
