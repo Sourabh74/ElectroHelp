@@ -5,7 +5,7 @@ const required = ["DB_HOST", "DB_NAME", "DB_USER", "DB_PASSWORD", "DB_SCHEMA"];
 
 for (const key of required) {
   if (!process.env[key]) {
-    throw new Error(`Missing required environment setting: ${key}`);
+    throw new Error(`Missing required environments setting: ${key}`);
   }
 }
 
