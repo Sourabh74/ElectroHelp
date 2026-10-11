@@ -1,3 +1,6 @@
+const path = require("node:path");
+require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
+
 const required = ["DB_HOST", "DB_NAME", "DB_USER", "DB_PASSWORD", "DB_SCHEMA"];
 
 for (const key of required) {
@@ -30,6 +33,7 @@ module.exports = {
     database: process.env.DB_NAME,
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
+    ssl: process.env.DB_SSL === "true" ? { rejectUnauthorized: true } : undefined,
     schema: process.env.DB_SCHEMA,
   },
 };

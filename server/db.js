@@ -4,7 +4,12 @@ const { Pool } = require("pg");
 const config = require("./config");
 
 const pool = new Pool({
-  ...config.database,
+  host: config.database.host,
+  port: config.database.port,
+  database: config.database.database,
+  user: config.database.user,
+  password: config.database.password,
+  ssl: config.database.ssl,
   max: 10,
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 5_000,
