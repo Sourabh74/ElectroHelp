@@ -1,0 +1,17 @@
+{
+  "name": "current-electrician-requests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Electrician service request website with PostgreSQL storage",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node --env-file=.env server.js",
+    "db:init": "node --env-file=.env server/init-db.js"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "pg": "^8.16.3"
+  }
+}
