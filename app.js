@@ -1,7 +1,3 @@
-const STORAGE_KEY = "current-electrician-requests";
-const SESSION_KEY = "current-electrician-session";
-const USERS_KEY = "current-electrician-users";
-
 const icons = {
   switch: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2" /><path d="m10 14 4-4m-4 0 4 4" /></svg>',
   fan: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12c-2-3-7-3-7-1s3 3 7 1Zm0 0c1-4-1-8-3-7s-1 4 3 7Zm0 0c3 2 7 1 7-1s-4-2-7 1Zm0 0c-1 4 1 8 3 7s1-4-3-7Z" /><circle cx="12" cy="12" r="1.5" /><path d="M12 14v7" /></svg>',
@@ -19,79 +15,34 @@ const serviceTypes = [
   { name: "Socket or outlet", detail: "Plug points & outlets", icon: "outlet" },
 ];
 
-let users = readStorage(USERS_KEY, []);
-if (!Array.isArray(users)) users = [];
-let session = readStorage(SESSION_KEY, null);
-if (!session?.userId || !users.some((user) => user.id === session.userId)) {
-  session = null;
-  localStorage.removeItem(SESSION_KEY);
-}
+let session = null;
+let requests = [];
 let activeView = "home";
 
-function readStorage(key, fallback) {
+async function apiRequest(url, options = {}) {
+  let response;
   try {
-    const value = localStorage.getItem(key);
-    return value ? JSON.parse(value) : fallback;
+    response = await fetch(url, {
+      ...options,
+      headers: { ...(options.body ? { "Content-Type": "application/json" } : {}), ...options.headers },
+    });
   } catch (error) {
-    console.error(`Unable to read ${key} from local storage`, error);
-    return fallback;
+    console.error("Could not reach the Current server:", error);
+    throw new Error("Cannot reach the server. Start the app with npm start and try again.");
   }
-}
 
-function getRequests() {
-  const requests = readStorage(STORAGE_KEY, []);
-  return Array.isArray(requests) ? requests : [];
-}
-
-function saveRequests(requests) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(requests));
-    return true;
-  } catch (error) {
-    console.error("Unable to save electrician requests", error);
-    showToast("Could not save your request. Please check your browser storage.");
-    return false;
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(data.error || "The request could not be completed.");
+    error.status = response.status;
+    throw error;
   }
+  return data;
 }
 
-function saveSession(nextSession) {
-  try {
-    if (nextSession) localStorage.setItem(SESSION_KEY, JSON.stringify(nextSession));
-    else localStorage.removeItem(SESSION_KEY);
-    session = nextSession;
-    updateProfile();
-    return true;
-  } catch (error) {
-    console.error("Unable to save your sign-in details", error);
-    showToast("Could not save your sign-in. Please check your browser storage.");
-    return false;
-  }
-}
-
-function saveUsers(nextUsers) {
-  try {
-    localStorage.setItem(USERS_KEY, JSON.stringify(nextUsers));
-    users = nextUsers;
-    return true;
-  } catch (error) {
-    console.error("Unable to save your account", error);
-    showToast("Could not save your account. Please check your browser storage.");
-    return false;
-  }
-}
-
-function toBase64(bytes) {
-  return btoa(String.fromCharCode(...bytes));
-}
-
-async function hashPassword(password, salt) {
-  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]);
-  const hash = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", salt: Uint8Array.from(atob(salt), (character) => character.charCodeAt(0)), iterations: 120000, hash: "SHA-256" },
-    key,
-    256,
-  );
-  return toBase64(new Uint8Array(hash));
+async function refreshRequests() {
+  const data = await apiRequest("/api/requests");
+  requests = data.requests;
 }
 
 function escapeHtml(value = "") {
@@ -146,26 +97,26 @@ function emptyState(title, description, buttonLabel, action) {
 }
 
 function customerView() {
-  const requests = getRequests().filter((request) => request.customerEmail === session?.email);
-  const pending = requests.filter((request) => request.status === "pending").length;
-  const accepted = requests.filter((request) => request.status === "accepted").length;
-  const completed = requests.filter((request) => request.status === "completed").length;
-  document.getElementById("nav-count").textContent = String(requests.length);
-  document.getElementById("nav-count").classList.toggle("hidden", requests.length === 0);
+  const customerRequests = requests;
+  const pending = customerRequests.filter((request) => request.status === "pending").length;
+  const accepted = customerRequests.filter((request) => request.status === "accepted").length;
+  const completed = customerRequests.filter((request) => request.status === "completed").length;
+  document.getElementById("nav-count").textContent = String(customerRequests.length);
+  document.getElementById("nav-count").classList.toggle("hidden", customerRequests.length === 0);
 
   if (activeView === "requests") {
     return `<div class="page-heading">
       <div><div class="eyebrow">Your home, taken care of</div><h1>My requests</h1><p>Keep track of your electrical service requests.</p></div>
       <button class="primary-button" type="button" data-action="new-request">${icons.bolt} New request</button>
     </div>
-    <section class="panel"><div class="panel-header"><div><h2>All requests</h2><p>${requests.length} request${requests.length === 1 ? "" : "s"} in total</p></div></div>
-      ${requests.length ? `<div class="request-list">${requests.slice().reverse().map(requestRow).join("")}</div>` : emptyState("No requests yet", "When something needs fixing, let us know and we'll find an electrician for you.", "Raise your first request", "new-request")}
+    <section class="panel"><div class="panel-header"><div><h2>All requests</h2><p>${customerRequests.length} request${customerRequests.length === 1 ? "" : "s"} in total</p></div></div>
+      ${customerRequests.length ? `<div class="request-list">${customerRequests.map(requestRow).join("")}</div>` : emptyState("No requests yet", "When something needs fixing, let us know and we'll find an electrician for you.", "Raise your first request", "new-request")}
     </section>`;
   }
 
-  const recent = requests.slice().reverse().slice(0, 3);
-  const statusMessage = requests.some((request) => request.status === "accepted" || request.status === "declined")
-    ? `<div class="notification-summary">${icons.bell}<span>Request update: ${requests.filter((request) => request.status === "accepted" || request.status === "declined").length} request${requests.filter((request) => request.status === "accepted" || request.status === "declined").length === 1 ? " has" : "s have"} received an electrician response.</span></div>`
+  const recent = customerRequests.slice(0, 3);
+  const statusMessage = customerRequests.some((request) => request.status === "accepted" || request.status === "declined")
+    ? `<div class="notification-summary">${icons.bell}<span>Request update: ${customerRequests.filter((request) => request.status === "accepted" || request.status === "declined").length} request${customerRequests.filter((request) => request.status === "accepted" || request.status === "declined").length === 1 ? " has" : "s have"} received an electrician response.</span></div>`
     : "";
 
   return `${statusMessage}<div class="welcome-banner">
@@ -186,10 +137,10 @@ function customerView() {
 }
 
 function electricianView() {
-  const requests = getRequests().slice().reverse();
-  const pending = requests.filter((request) => request.status === "pending");
-  const accepted = requests.filter((request) => request.status === "accepted").length;
-  const completed = requests.filter((request) => request.status === "completed").length;
+  const electricianRequests = requests;
+  const pending = electricianRequests.filter((request) => request.status === "pending");
+  const accepted = electricianRequests.filter((request) => request.status === "accepted").length;
+  const completed = electricianRequests.filter((request) => request.status === "completed").length;
   document.getElementById("nav-count").classList.add("hidden");
   document.getElementById("page-crumb").textContent = "Incoming requests";
   return `<div class="page-heading electrician-heading">
@@ -202,7 +153,7 @@ function electricianView() {
       <div class="stat-card"><span class="stat-icon neutral">${icons.outlet}</span><div class="stat-copy"><span>Completed jobs</span><strong>${completed}</strong></div></div>
     </div>
     <section class="panel"><div class="panel-header"><div><h2>Customer requests</h2><p>Respond to a request to let the customer know</p></div><span class="status-pill">${pending.length} new</span></div>
-      ${requests.length ? requests.map((request) => incomingCard(request)).join("") : emptyState("All caught up", "New customer requests will appear here as soon as they're submitted.", "", "")}
+      ${electricianRequests.length ? electricianRequests.map((request) => incomingCard(request)).join("") : emptyState("All caught up", "New customer requests will appear here as soon as they're submitted.", "", "")}
     </section>`;
 }
 
@@ -281,7 +232,7 @@ function openAuth(portal, mode, email = "") {
       <div class="field"><label for="email">Email address</label><input id="email" name="email" type="email" placeholder="you@example.com" autocomplete="email" value="${escapeHtml(email)}" required maxlength="160" ${isRegistration && !email ? "autofocus" : ""}></div>
       <div class="field"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="${isRegistration ? "new-password" : "current-password"}" required minlength="8" maxlength="128"></div>
       ${confirmationField}
-      <span class="form-hint">Demo account data is stored in this browser. Use a password you don’t use elsewhere.</span>
+      <span class="form-hint">Your account and password hash are stored in PostgreSQL. Use a password you don’t use elsewhere.</span>
       <div class="modal-footer"><button class="primary-button" type="submit">${isRegistration ? "Create account" : "Log in"}</button></div>
     </form>
     <button class="quiet-button auth-switch" type="button" data-action="${switchAction}" data-portal="${portal}" data-email="${escapeHtml(email)}">${switchLabel}</button>
@@ -311,19 +262,20 @@ function openRequestForm(presetIssue = "") {
   </section>`);
 }
 
-function respondToRequest(id, status) {
-  const requests = getRequests();
-  const request = requests.find((item) => item.id === id);
-  if (!request) {
-    showToast("This request could not be found. Please refresh and try again.");
-    return;
+async function respondToRequest(id, status) {
+  try {
+    await apiRequest(`/api/requests/${encodeURIComponent(id)}/status`, {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    });
+    await refreshRequests();
+    document.getElementById("notification-dot").classList.remove("hidden");
+    render();
+    showToast(status === "accepted" ? "Request accepted. The customer can see your response." : status === "declined" ? "Request declined. The customer can see your response." : "Job marked complete.");
+  } catch (error) {
+    console.error("Could not update the service request:", error);
+    showToast(error.message);
   }
-  request.status = status;
-  request.updatedAt = new Date().toISOString();
-  if (!saveRequests(requests)) return;
-  document.getElementById("notification-dot").classList.remove("hidden");
-  render();
-  showToast(status === "accepted" ? "Request accepted. The customer can see your response." : status === "declined" ? "Request declined. The customer can see your response." : "Job marked complete.");
 }
 
 document.addEventListener("click", (event) => {
@@ -354,28 +306,17 @@ document.addEventListener("submit", async (event) => {
       showToast("The passwords do not match.");
       return;
     }
-    if (users.some((user) => user.email === email)) {
-      showToast("An account with this email already exists. Please log in.");
-      return;
-    }
     try {
-      const salt = toBase64(crypto.getRandomValues(new Uint8Array(16)));
-      const user = {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        name,
-        email,
-        accountType: portal,
-        salt,
-        passwordHash: await hashPassword(password, salt),
-        createdAt: new Date().toISOString(),
-      };
-      if (!saveUsers([...users, user])) return;
+      await apiRequest("/api/auth/register", {
+        method: "POST",
+        body: JSON.stringify({ name, email, password, accountType: portal }),
+      });
       closeModal();
       openAuth(portal, "login", email);
       showToast("Account registered. Please log in to continue.");
     } catch (error) {
       console.error("Unable to register account", error);
-      showToast("Could not register your account. Please try again.");
+      showToast(error.message);
     }
   }
   if (event.target.id === "login-form") {
@@ -384,60 +325,61 @@ document.addEventListener("submit", async (event) => {
     const email = String(formData.get("email")).trim().toLowerCase();
     const password = String(formData.get("password"));
     const portal = event.target.dataset.portal;
-    const user = users.find((account) => account.email === email && account.accountType === portal);
-    if (!user) {
-      showToast(`No ${portal} account found. Please register first.`);
-      return;
-    }
     try {
-      const passwordHash = await hashPassword(password, user.salt);
-      if (passwordHash !== user.passwordHash) {
-        showToast("Email or password is incorrect.");
-        return;
-      }
-      if (saveSession({ userId: user.id, name: user.name, email: user.email, accountType: user.accountType })) {
-        activeView = "home";
-        closeModal();
-        render();
-        showToast(`Welcome back, ${user.name.split(" ")[0]}!`);
-      }
+      const data = await apiRequest("/api/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ email, password, accountType: portal }),
+      });
+      session = data.user;
+      await refreshRequests();
+      updateProfile();
+      activeView = "home";
+      closeModal();
+      render();
+      showToast(`Welcome back, ${session.name.split(" ")[0]}!`);
     } catch (error) {
       console.error("Unable to log in", error);
-      showToast("Could not log in right now. Please try again.");
+      showToast(error.message);
     }
   }
   if (event.target.id === "request-form") {
     event.preventDefault();
     const formData = new FormData(event.target);
     const request = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       issue: String(formData.get("issue")),
       location: String(formData.get("location")).trim(),
       description: String(formData.get("description")).trim(),
       phone: String(formData.get("phone")).trim(),
-      customerName: session.name,
-      customerEmail: session.email,
-      status: "pending",
-      date: new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" }).format(new Date()),
-      createdAt: new Date().toISOString(),
     };
-    const requests = getRequests();
-    requests.push(request);
-    if (!saveRequests(requests)) return;
-    closeModal();
-    activeView = "home";
-    render();
-    showToast("Request sent. An electrician will review it shortly.");
+    try {
+      await apiRequest("/api/requests", { method: "POST", body: JSON.stringify(request) });
+      await refreshRequests();
+      closeModal();
+      activeView = "home";
+      render();
+      showToast("Request sent. An electrician will review it shortly.");
+    } catch (error) {
+      console.error("Could not send service request:", error);
+      showToast(error.message);
+    }
   }
 });
 
 document.querySelectorAll(".nav-link").forEach((link) => link.addEventListener("click", () => setView(link.dataset.view)));
-document.getElementById("profile-button").addEventListener("click", () => {
+document.getElementById("profile-button").addEventListener("click", async () => {
   if (session) {
-    saveSession(null);
-    activeView = "home";
-    render();
-    showToast("You have signed out.");
+    try {
+      await apiRequest("/api/auth/logout", { method: "POST" });
+      session = null;
+      requests = [];
+      updateProfile();
+      activeView = "home";
+      render();
+      showToast("You have signed out.");
+    } catch (error) {
+      console.error("Could not sign out:", error);
+      showToast(error.message);
+    }
   } else {
     openAuth("customer", "login");
   }
@@ -449,13 +391,27 @@ document.getElementById("notification-button").addEventListener("click", () => {
   }
   document.getElementById("notification-dot").classList.add("hidden");
   if (session.accountType === "customer") {
-    const answered = getRequests().filter((request) => request.customerEmail === session.email && ["accepted", "declined", "completed"].includes(request.status)).length;
+    const answered = requests.filter((request) => ["accepted", "declined", "completed"].includes(request.status)).length;
     showToast(answered ? `You have ${answered} request update${answered === 1 ? "" : "s"}. Check your recent requests.` : "You're all caught up on notifications.");
   } else {
-    const pending = getRequests().filter((request) => request.status === "pending").length;
+    const pending = requests.filter((request) => request.status === "pending").length;
     showToast(pending ? `You have ${pending} request${pending === 1 ? "" : "s"} waiting for your response.` : "You're all caught up on notifications.");
   }
 });
 
-updateProfile();
-render();
+async function bootstrap() {
+  try {
+    const data = await apiRequest("/api/auth/me");
+    session = data.user;
+    if (session) await refreshRequests();
+  } catch (error) {
+    if (error.status !== 401) {
+      console.error("Could not connect to the Current API:", error);
+      showToast(error.message);
+    }
+  }
+  updateProfile();
+  render();
+}
+
+bootstrap();
