@@ -4,6 +4,7 @@ const { Pool } = require("pg");
 const config = require("./config");
 
 const pool = new Pool({
+  connectionString: config.database.connectionString,
   host: config.database.host,
   port: config.database.port,
   database: config.database.database,
