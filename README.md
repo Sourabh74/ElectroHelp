@@ -11,7 +11,7 @@ The website uses a local PostgreSQL database in the `electrician` schema. Config
 5. Run `npm run db:init` to create the schema and tables, or skip this step because `npm start` initializes them automatically.
 6. Run `npm start` and open <http://localhost:3000>.
 
-Set either `DATABASE_URL` to a PostgreSQL connection URL, or configure `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD` separately. `DB_SCHEMA` chooses the schema that contains the app tables and defaults to `electrician`. `DB_SSL=true` enables certificate-validated TLS; in production TLS is enabled by default unless `DB_SSL=false` is explicitly set.
+Set either `DATABASE_URL` to a PostgreSQL connection URL, or configure `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD` separately. `DB_SCHEMA` chooses the schema that contains the app tables and defaults to `electrician`. Use `DB_SSL=false` for a local PostgreSQL server without TLS and `DB_SSL=true` for Supabase, Render, or other TLS-enabled hosted databases.
 
 ## Database tables
 
@@ -19,9 +19,9 @@ Set either `DATABASE_URL` to a PostgreSQL connection URL, or configure `DB_HOST`
 - `electrician.sessions` stores hashed session tokens and expiration times.
 - `electrician.service_requests` stores repair details, customer ownership, and request status.
 
-The API enforces account types: customers can create and view their own requests; electricians can review incoming requests and accept, decline, or complete them.
+Public registration is limited to customer accounts. Electrician accounts must be provisioned by a trusted administrator before they can log in. The API enforces account types: customers can create and view their own requests; electricians can review incoming requests and accept, decline, or complete them.
 
-Keep `.env` private and do not commit database credentials. The included credentials are for local development only; use a dedicated, least-privileged database account for any shared or deployed environment.
+Keep `.env` private and do not commit database credentials. Use a dedicated, least-privileged database account for any shared or deployed environment.
 
 ## Free demo deployment
 
@@ -29,7 +29,7 @@ This is a free-tier demo setup, not production hosting. Free hosting can sleep, 
 
 1. Push the project to a GitHub repository. Confirm `.env` is ignored by Git and do not push it.
 2. Create a free PostgreSQL project on [Supabase](https://supabase.com/). In its **Connect** dialog, choose **Session pooler** and copy the full PostgreSQL connection string. Set a strong database password.
-3. In Supabase's SQL editor, run `server/schema.sql` after replacing both occurrences of `__SCHEMA__` with `"electrician"`. This creates the application tables without needing the deployed server to have schema-creation privileges.
+3. In Supabase's SQL editor, run `server/schema.sql` after replacing every occurrence of `__SCHEMA__` with `"electrician"`. This creates the application tables without needing the deployed server to have schema-creation privileges.
 4. Create a free **Web Service** on [Render](https://render.com/) and connect the GitHub repository. Use these settings:
    - **Build command:** `npm install`
    - **Start command:** `npm start`

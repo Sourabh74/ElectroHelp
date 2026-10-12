@@ -18,7 +18,7 @@ app.use(express.json({ limit: "16kb" }));
 function cookieValue(request, name) {
   const cookies = request.headers.cookie?.split(";") || [];
   const entry = cookies.map((cookie) => cookie.trim()).find((cookie) => cookie.startsWith(`${name}=`));
-  return entry ? decodeURIComponent(entry.slice(name.length + 1)) : null;
+  return entry ? entry.slice(name.length + 1) : null;
 }
 
 function sessionCookie(token, maxAgeSeconds) {
@@ -107,8 +107,8 @@ app.post("/api/auth/register", async (request, response, next) => {
   const { name, email, password, accountType } = request.body || {};
   if (!validateText(name, 80, true) || !validateEmail(email) ||
       typeof password !== "string" || password.length < 8 || password.length > 128 ||
-      !["customer", "electrician"].includes(accountType)) {
-    return sendError(response, 400, "Enter a valid name, email, password (at least 8 characters), and account type.");
+      accountType !== "customer") {
+    return sendError(response, 400, "Enter a valid name, email, password (8 to 128 characters), and customer account type.");
   }
 
   try {
@@ -130,7 +130,7 @@ app.post("/api/auth/register", async (request, response, next) => {
 
 app.post("/api/auth/login", async (request, response, next) => {
   const { email, password, accountType } = request.body || {};
-  if (!validateEmail(email) || typeof password !== "string" ||
+  if (!validateEmail(email) || typeof password !== "string" || password.length < 8 || password.length > 128 ||
       !["customer", "electrician"].includes(accountType)) {
     return sendError(response, 400, "Enter a valid email, password, and account type.");
   }
@@ -246,7 +246,10 @@ app.post("/api/requests", requireAuth("customer"), async (request, response, nex
 
 app.patch("/api/requests/:id/status", requireAuth("electrician"), async (request, response, next) => {
   const { status } = request.body || {};
-  if (!/^\d+$/.test(request.params.id) || !["accepted", "declined", "completed"].includes(status)) {
+  const requestId = request.params.id;
+  if (!/^[1-9]\d{0,18}$/.test(requestId) ||
+      BigInt(requestId) > 9223372036854775807n ||
+      !["accepted", "declined", "completed"].includes(status)) {
     return sendError(response, 400, "The request id or status is invalid.");
   }
 
@@ -286,6 +289,12 @@ app.get("/favicon.ico", (request, response) => response.sendStatus(204));
 
 app.use((request, response) => sendError(response, 404, "Not found."));
 app.use((error, request, response, next) => {
+  if (error.type === "entity.parse.failed") {
+    return sendError(response, 400, "Request body must be valid JSON.");
+  }
+  if (error.type === "entity.too.large") {
+    return sendError(response, 413, "Request body is too large.");
+  }
   console.error("Request failed:", error);
   if (response.headersSent) return next(error);
   return sendError(response, 500, "Something went wrong. Please try again.");
