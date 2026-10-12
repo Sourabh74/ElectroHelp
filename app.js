@@ -31,7 +31,12 @@ async function apiRequest(url, options = {}) {
     throw new Error("Cannot reach the server. Start the app with npm start and try again.");
   }
 
-  const data = await response.json().catch(() => ({}));
+  let data;
+  try {
+    data = await response.json();
+  } catch {
+    throw new Error("The server returned an invalid response.");
+  }
   if (!response.ok) {
     const error = new Error(data.error || "The request could not be completed.");
     error.status = response.status;
