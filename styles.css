@@ -164,6 +164,9 @@ a { color: inherit; text-decoration: none; }
 .field textarea { min-height: 83px; resize: vertical; padding-top: 10px; line-height: 1.5; }
 .field input:focus, .field select:focus, .field textarea:focus { border-color: #80a58a; box-shadow: 0 0 0 3px rgba(60, 120, 76, .1); }
 .field input::placeholder, .field textarea::placeholder { color: #a4aaa2; }
+.field input[aria-invalid="true"] { border-color: #c96558; }
+.field-error { min-height: 0; color: #b34e43; font-size: 10px; line-height: 1.4; }
+.field-error:not(:empty) { min-height: 14px; }
 .form-hint { color: #959b93; font-size: 9px; }
 .modal-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
 .toast-region { position: fixed; right: 22px; bottom: 22px; z-index: 10; display: grid; gap: 8px; }
