@@ -30,6 +30,7 @@ const port = Number(process.env.PORT || 3000);
 const dbPort = Number(process.env.DB_PORT || 5432);
 const schema = process.env.DB_SCHEMA || "electrician";
 const sslSetting = process.env.DB_SSL?.toLowerCase();
+const sslCa = process.env.DB_SSL_CA?.trim();
 
 if (sslSetting && !["true", "false"].includes(sslSetting)) {
   throw new Error("DB_SSL must be set to true or false.");
@@ -58,7 +59,7 @@ module.exports = {
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
     ssl: sslSetting === "true" || (!sslSetting && nodeEnv === "production")
-      ? { rejectUnauthorized: true }
+      ? { rejectUnauthorized: true, ...(sslCa ? { ca: sslCa } : {}) }
       : undefined,
     schema,
   },
