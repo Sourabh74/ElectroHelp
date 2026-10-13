@@ -105,10 +105,27 @@ app.get("/api/health", async (request, response, next) => {
 
 app.post("/api/auth/register", async (request, response, next) => {
   const { name, email, password, accountType } = request.body || {};
-  if (!validateText(name, 80, true) || !validateEmail(email) ||
-      typeof password !== "string" || password.length < 8 || password.length > 128 ||
-      accountType !== "customer") {
-    return sendError(response, 400, "Enter a valid name, email, password (8 to 128 characters), and customer account type.");
+  const fieldErrors = {};
+  if (typeof name !== "string" || !name.trim()) {
+    fieldErrors.name = "Enter your name.";
+  } else if (name.trim().length > 80) {
+    fieldErrors.name = "Your name must be 80 characters or fewer.";
+  }
+  if (typeof email !== "string" || !email.trim()) {
+    fieldErrors.email = "Enter your email address.";
+  } else if (!validateEmail(email.trim())) {
+    fieldErrors.email = "Enter a valid email address.";
+  }
+  if (typeof password !== "string" || !password) {
+    fieldErrors.password = "Enter a password.";
+  } else if (password.length < 8 || password.length > 128) {
+    fieldErrors.password = "Password must be between 8 and 128 characters.";
+  }
+  if (Object.keys(fieldErrors).length > 0) {
+    return response.status(400).json({ error: "Please correct the highlighted fields.", fieldErrors });
+  }
+  if (accountType !== "customer") {
+    return sendError(response, 400, "Only customer accounts can be created here.");
   }
 
   try {
@@ -123,16 +140,34 @@ app.post("/api/auth/register", async (request, response, next) => {
     );
     response.status(201).json({ user: publicAccount(result.rows[0]) });
   } catch (error) {
-    if (error.code === "23505") return sendError(response, 409, "An account with this email already exists.");
+    if (error.code === "23505") {
+      return response.status(409).json({
+        error: "An account with this email already exists.",
+        fieldErrors: { email: "An account with this email already exists." },
+      });
+    }
     return next(error);
   }
 });
 
 app.post("/api/auth/login", async (request, response, next) => {
   const { email, password, accountType } = request.body || {};
-  if (!validateEmail(email) || typeof password !== "string" || password.length < 8 || password.length > 128 ||
-      !["customer", "electrician"].includes(accountType)) {
-    return sendError(response, 400, "Enter a valid email, password, and account type.");
+  const fieldErrors = {};
+  if (typeof email !== "string" || !email.trim()) {
+    fieldErrors.email = "Enter your email address.";
+  } else if (!validateEmail(email.trim())) {
+    fieldErrors.email = "Enter a valid email address.";
+  }
+  if (typeof password !== "string" || !password) {
+    fieldErrors.password = "Enter your password.";
+  } else if (password.length < 8 || password.length > 128) {
+    fieldErrors.password = "Password must be between 8 and 128 characters.";
+  }
+  if (Object.keys(fieldErrors).length > 0) {
+    return response.status(400).json({ error: "Please correct the highlighted fields.", fieldErrors });
+  }
+  if (!["customer", "electrician"].includes(accountType)) {
+    return sendError(response, 400, "Choose a valid account type.");
   }
 
   try {
@@ -142,12 +177,20 @@ app.post("/api/auth/login", async (request, response, next) => {
        WHERE email = $1 AND account_type = $2`,
       [email.trim().toLowerCase(), accountType],
     );
-    if (result.rowCount === 0) return sendError(response, 401, "Email or password is incorrect.");
+    if (result.rowCount === 0) {
+      return response.status(401).json({
+        error: "Email or password is incorrect.",
+        fieldErrors: { password: "Email or password is incorrect." },
+      });
+    }
 
     const account = result.rows[0];
     const candidate = await scrypt(password, account.password_salt, account.password_hash.length);
     if (!crypto.timingSafeEqual(candidate, account.password_hash)) {
-      return sendError(response, 401, "Email or password is incorrect.");
+      return response.status(401).json({
+        error: "Email or password is incorrect.",
+        fieldErrors: { password: "Email or password is incorrect." },
+      });
     }
 
     const token = crypto.randomBytes(32).toString("base64url");

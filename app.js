@@ -40,6 +40,7 @@ async function apiRequest(url, options = {}) {
   if (!response.ok) {
     const error = new Error(data.error || "The request could not be completed.");
     error.status = response.status;
+    error.fieldErrors = data.fieldErrors;
     throw error;
   }
   return data;
@@ -218,24 +219,63 @@ function showToast(message) {
   window.setTimeout(() => toast.remove(), 4000);
 }
 
+function setFieldErrors(form, errors = {}) {
+  form.querySelectorAll(".field-error").forEach((message) => {
+    message.textContent = errors[message.dataset.fieldError] || "";
+  });
+  form.querySelectorAll("[name]").forEach((input) => {
+    const invalid = Boolean(errors[input.name]);
+    input.setAttribute("aria-invalid", String(invalid));
+    if (invalid) input.setAttribute("aria-describedby", `${input.id}-error`);
+    else input.removeAttribute("aria-describedby");
+  });
+}
+
+function validateAuthForm(form) {
+  const values = new FormData(form);
+  const errors = {};
+  const email = String(values.get("email") || "").trim();
+  const password = String(values.get("password") || "");
+
+  if (!email) errors.email = "Enter your email address.";
+  else if (email.length > 160 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    errors.email = "Enter a valid email address.";
+  }
+  if (!password) errors.password = "Enter your password.";
+  else if (password.length < 8 || password.length > 128) {
+    errors.password = "Password must be between 8 and 128 characters.";
+  }
+
+  if (form.id === "register-form") {
+    const name = String(values.get("name") || "").trim();
+    const confirmPassword = String(values.get("confirmPassword") || "");
+    if (!name) errors.name = "Enter your name.";
+    else if (name.length > 80) errors.name = "Your name must be 80 characters or fewer.";
+    if (!confirmPassword) errors.confirmPassword = "Confirm your password.";
+    else if (password !== confirmPassword) errors.confirmPassword = "Passwords do not match.";
+  }
+
+  return errors;
+}
+
 function openAuth(portal, mode, email = "") {
   const isRegistration = mode === "register";
   const portalLabel = portal === "electrician" ? "electrician" : "customer";
   const heading = isRegistration ? `Create ${portalLabel} account` : `${portalLabel[0].toUpperCase()}${portalLabel.slice(1)} log in`;
   const nameField = isRegistration
-    ? `<div class="field"><label for="name">Your name</label><input id="name" name="name" type="text" placeholder="e.g. Alex Morgan" autocomplete="name" required autofocus maxlength="80"></div>`
+    ? `<div class="field"><label for="name">Your name</label><input id="name" name="name" type="text" placeholder="e.g. Alex Morgan" autocomplete="name" maxlength="80" aria-describedby="name-error"><span class="field-error" id="name-error" data-field-error="name" aria-live="polite"></span></div>`
     : "";
   const confirmationField = isRegistration
-    ? `<div class="field"><label for="confirm-password">Confirm password</label><input id="confirm-password" name="confirmPassword" type="password" autocomplete="new-password" required minlength="8" maxlength="128"></div>`
+    ? `<div class="field"><label for="confirm-password">Confirm password</label><input id="confirm-password" name="confirmPassword" type="password" autocomplete="new-password" maxlength="128" aria-describedby="confirmPassword-error"><span class="field-error" id="confirmPassword-error" data-field-error="confirmPassword" aria-live="polite"></span></div>`
     : "";
   const switchAction = isRegistration ? "open-login" : "open-register";
   const switchLabel = isRegistration ? "Already registered? Log in" : "New here? Create an account";
   openModal(`<section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
     <div class="modal-heading"><div><h2 id="modal-title">${heading}</h2><p>${isRegistration ? "Register first, then log in to continue." : "Log in with the email and password you registered with."}</p></div><button class="close-button" type="button" data-action="close-modal" aria-label="Close">&times;</button></div>
-    <form id="${isRegistration ? "register-form" : "login-form"}" class="form-grid" data-portal="${portal}">
+    <form id="${isRegistration ? "register-form" : "login-form"}" class="form-grid" data-portal="${portal}" novalidate>
       ${nameField}
-      <div class="field"><label for="email">Email address</label><input id="email" name="email" type="email" placeholder="you@example.com" autocomplete="email" value="${escapeHtml(email)}" required maxlength="160" ${isRegistration && !email ? "autofocus" : ""}></div>
-      <div class="field"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="${isRegistration ? "new-password" : "current-password"}" required minlength="8" maxlength="128"></div>
+      <div class="field"><label for="email">Email address</label><input id="email" name="email" type="email" placeholder="you@example.com" autocomplete="email" value="${escapeHtml(email)}" maxlength="160" aria-describedby="email-error" ${isRegistration && !email ? "autofocus" : ""}><span class="field-error" id="email-error" data-field-error="email" aria-live="polite"></span></div>
+      <div class="field"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="${isRegistration ? "new-password" : "current-password"}" maxlength="128" aria-describedby="password-error"><span class="field-error" id="password-error" data-field-error="password" aria-live="polite"></span></div>
       ${confirmationField}
       <span class="form-hint">Your account and password hash are stored in PostgreSQL. Use a password you don’t use elsewhere.</span>
       <div class="modal-footer"><button class="primary-button" type="submit">${isRegistration ? "Create account" : "Log in"}</button></div>
@@ -300,17 +340,16 @@ document.addEventListener("click", (event) => {
 document.addEventListener("submit", async (event) => {
   if (event.target.id === "register-form") {
     event.preventDefault();
+    const form = event.target;
+    const validationErrors = validateAuthForm(form);
+    setFieldErrors(form, validationErrors);
+    if (Object.keys(validationErrors).length > 0) return;
     const formData = new FormData(event.target);
     const email = String(formData.get("email")).trim().toLowerCase();
     const name = String(formData.get("name")).trim();
     const password = String(formData.get("password"));
     const confirmPassword = String(formData.get("confirmPassword"));
     const portal = event.target.dataset.portal;
-    if (!name || !email) return;
-    if (password !== confirmPassword) {
-      showToast("The passwords do not match.");
-      return;
-    }
     try {
       await apiRequest("/api/auth/register", {
         method: "POST",
@@ -321,11 +360,16 @@ document.addEventListener("submit", async (event) => {
       showToast("Account registered. Please log in to continue.");
     } catch (error) {
       console.error("Unable to register account", error);
-      showToast(error.message);
+      if (error.fieldErrors) setFieldErrors(form, error.fieldErrors);
+      else showToast(error.message);
     }
   }
   if (event.target.id === "login-form") {
     event.preventDefault();
+    const form = event.target;
+    const validationErrors = validateAuthForm(form);
+    setFieldErrors(form, validationErrors);
+    if (Object.keys(validationErrors).length > 0) return;
     const formData = new FormData(event.target);
     const email = String(formData.get("email")).trim().toLowerCase();
     const password = String(formData.get("password"));
@@ -344,7 +388,8 @@ document.addEventListener("submit", async (event) => {
       showToast(`Welcome back, ${session.name.split(" ")[0]}!`);
     } catch (error) {
       console.error("Unable to log in", error);
-      showToast(error.message);
+      if (error.fieldErrors) setFieldErrors(form, error.fieldErrors);
+      else showToast(error.message);
     }
   }
   if (event.target.id === "request-form") {
@@ -368,6 +413,23 @@ document.addEventListener("submit", async (event) => {
       showToast(error.message);
     }
   }
+});
+
+document.addEventListener("input", (event) => {
+  const form = event.target.form;
+  if (!form || !["register-form", "login-form"].includes(form.id)) return;
+  const errors = validateAuthForm(form);
+  const fieldsToUpdate = new Set(
+    [...form.querySelectorAll('[aria-invalid="true"]')].map((input) => input.name),
+  );
+  fieldsToUpdate.add(event.target.name);
+  if (event.target.name === "password") fieldsToUpdate.add("confirmPassword");
+  const visibleErrors = Object.fromEntries(
+    [...fieldsToUpdate]
+      .filter((name) => errors[name])
+      .map((name) => [name, errors[name]]),
+  );
+  setFieldErrors(form, visibleErrors);
 });
 
 document.querySelectorAll(".nav-link").forEach((link) => link.addEventListener("click", () => setView(link.dataset.view)));
