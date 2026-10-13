@@ -11,7 +11,7 @@ The website uses a local PostgreSQL database in the `electrician` schema. Config
 5. Run `npm run db:init` to create the schema and tables, or skip this step because `npm start` initializes them automatically.
 6. Run `npm start` and open <http://localhost:3000>.
 
-Set either `DATABASE_URL` to a PostgreSQL connection URL, or configure `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD` separately. `DB_SCHEMA` chooses the schema that contains the app tables and defaults to `electrician`. Use `DB_SSL=false` for a local PostgreSQL server without TLS and `DB_SSL=true` for Supabase, Render, or other TLS-enabled hosted databases. If the database uses a custom certificate authority, set `DB_SSL_CA` to its PEM certificate; TLS certificate verification remains enabled.
+Set either `DATABASE_URL` to a PostgreSQL connection URL, or configure `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD` separately. `DB_SCHEMA` chooses the schema that contains the app tables and defaults to `electrician`. Use `DB_SSL=false` for a local PostgreSQL server without TLS and `DB_SSL=true` for Supabase, Render, or other TLS-enabled hosted databases. If the database uses a custom certificate authority, set `DB_SSL_CA` to its PEM certificate or `DB_SSL_CA_FILE` to a PEM file path; TLS certificate verification remains enabled.
 
 ## Database tables
 
@@ -41,7 +41,7 @@ This is a free-tier demo setup, not production hosting. Free hosting can sleep, 
    - `DB_SSL`: `true`
    - `NODE_ENV`: `production`
    - `PORT` is supplied by Render; do not set it manually.
-   - If startup reports `self-signed certificate in certificate chain`, download the database CA certificate from your Supabase project's **Database Settings → SSL Configuration** and add its PEM contents as `DB_SSL_CA` in Render.
+   - If startup reports `self-signed certificate in certificate chain`, download the database CA certificate from your Supabase project's **Database Settings → SSL Configuration** and add it to the Render service as a secret file named `supabase-prod-ca-2021.crt`. Set `DB_SSL_CA_FILE` to `/etc/secrets/supabase-prod-ca-2021.crt`.
 6. Save the variables and deploy. Open the Render URL and check that `/api/health` returns `{"status":"ok","database":"connected"}`.
 
 Use the exact connection string from Supabase; its pooler username is different from the local `postgres` user. Alternatively, set `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD` as separate Render environment variables. Free Render web services sleep after inactivity; free Supabase projects can pause after a week of inactivity and have a 500 MB database limit. Render's free PostgreSQL database expires after 30 days, so this guide uses Supabase for the database instead.

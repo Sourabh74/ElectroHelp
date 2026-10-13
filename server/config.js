@@ -1,3 +1,4 @@
+const fs = require("node:fs");
 const path = require("node:path");
 require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
 
@@ -31,9 +32,14 @@ const dbPort = Number(process.env.DB_PORT || 5432);
 const schema = process.env.DB_SCHEMA || "electrician";
 const sslSetting = process.env.DB_SSL?.toLowerCase();
 const sslCa = process.env.DB_SSL_CA?.trim();
+const sslCaFile = process.env.DB_SSL_CA_FILE?.trim();
 
 if (sslSetting && !["true", "false"].includes(sslSetting)) {
   throw new Error("DB_SSL must be set to true or false.");
+}
+
+if (sslCa && sslCaFile) {
+  throw new Error("Set either DB_SSL_CA or DB_SSL_CA_FILE, not both.");
 }
 
 if (!Number.isInteger(port) || port < 1 || port > 65535) {
@@ -59,7 +65,10 @@ module.exports = {
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
     ssl: sslSetting === "true" || (!sslSetting && nodeEnv === "production")
-      ? { rejectUnauthorized: true, ...(sslCa ? { ca: sslCa } : {}) }
+      ? {
+        rejectUnauthorized: true,
+        ...(sslCa ? { ca: sslCa } : sslCaFile ? { ca: fs.readFileSync(sslCaFile, "utf8") } : {}),
+      }
       : undefined,
     schema,
   },
