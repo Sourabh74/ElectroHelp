@@ -130,8 +130,8 @@ app.post("/api/auth/register", async (request, response, next) => {
   if (Object.keys(fieldErrors).length > 0) {
     return response.status(400).json({ error: "Please correct the highlighted fields.", fieldErrors });
   }
-  if (accountType !== "customer" && accountType !== "electrician") {
-    return sendError(response, 400, "Only customer and electrician accounts can be created here.");
+  if (accountType !== "electrician" && accountType !== "customer") {
+    return sendError(response, 400, "Only customer/electrician accounts can be created here.");
   }
 
   try {
