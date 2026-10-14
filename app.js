@@ -18,6 +18,11 @@ const serviceTypes = [
 let session = null;
 let requests = [];
 let activeView = "home";
+const locationMaps = new WeakMap();
+const locationMarkers = new WeakMap();
+let activeLocationMap = null;
+let activeLocationMapForm = null;
+let lastGeocoderRequestAt = 0;
 
 async function apiRequest(url, options = {}) {
   let response;
@@ -57,6 +62,158 @@ function escapeHtml(value = "") {
   })[character]);
 }
 
+function locationPickerMarkup(formId) {
+  return `<div class="location-picker">
+    <div class="location-tools">
+      <button class="secondary-button" type="button" data-action="find-address" data-form="${formId}">Find typed address</button>
+      <button class="secondary-button" type="button" data-action="open-map" data-form="${formId}">Choose on map</button>
+      <button class="quiet-button" type="button" data-action="use-device-location" data-form="${formId}">Use current location</button>
+    </div>
+    <p class="form-hint">Map and address lookup use OpenStreetMap. Finding a typed address or selecting a map point sends that location to OpenStreetMap. You can edit the address and city; a map point is needed to match nearby electricians.</p>
+    <div class="map-canvas hidden" id="${formId}-map" aria-label="Choose a location on the map"></div>
+  </div>`;
+}
+
+function formLocationFields(form) {
+  return {
+    address: form.querySelector('[name="serviceAddress"]'),
+    city: form.querySelector('[name="serviceCity"]'),
+    latitude: form.querySelector('[name="latitude"]'),
+    longitude: form.querySelector('[name="longitude"]'),
+  };
+}
+
+function updateMapMarker(form, latitude, longitude) {
+  const map = locationMaps.get(form);
+  if (!map || !window.L) return;
+  const point = [latitude, longitude];
+  const marker = locationMarkers.get(form);
+  if (marker) marker.setLatLng(point);
+  else locationMarkers.set(form, window.L.marker(point).addTo(map));
+  map.setView(point, 15);
+}
+
+async function geocoderRequest(url) {
+  const wait = Math.max(0, 1000 - (Date.now() - lastGeocoderRequestAt));
+  if (wait) await new Promise((resolve) => window.setTimeout(resolve, wait));
+  lastGeocoderRequestAt = Date.now();
+  const response = await fetch(url);
+  if (!response.ok) throw new Error("The map address service is unavailable. Please try again.");
+  return response.json();
+}
+
+function applyResolvedLocation(form, result, preserveAddress = false) {
+  const fields = formLocationFields(form);
+  const latitude = Number(result.lat);
+  const longitude = Number(result.lon);
+  if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90 ||
+      !Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+    throw new Error("The map returned an invalid location.");
+  }
+  fields.latitude.value = String(latitude);
+  fields.longitude.value = String(longitude);
+  const address = result.address || {};
+  const city = address.city || address.town || address.village || address.municipality ||
+    address.city_district || "";
+  if (city) fields.city.value = city;
+  if (fields.address && !preserveAddress) fields.address.value = result.display_name || "";
+  updateMapMarker(form, latitude, longitude);
+}
+
+async function geocodeAddress(form) {
+  const { address, city } = formLocationFields(form);
+  const query = [address?.value.trim(), city.value.trim()].filter(Boolean).join(", ");
+  if (!query) throw new Error("Enter an address or city to find it on the map.");
+  const params = new URLSearchParams({ format: "jsonv2", addressdetails: "1", limit: "1", q: query });
+  const results = await geocoderRequest(`https://nominatim.openstreetmap.org/search?${params}`);
+  if (!results.length) throw new Error("Address not found. Check the address and city, or choose the location on the map.");
+  applyResolvedLocation(form, results[0], true);
+}
+
+async function reverseGeocode(form, latitude, longitude) {
+  const params = new URLSearchParams({
+    format: "jsonv2",
+    addressdetails: "1",
+    lat: String(latitude),
+    lon: String(longitude),
+  });
+  const result = await geocoderRequest(`https://nominatim.openstreetmap.org/reverse?${params}`);
+  if (!result.address) throw new Error("The map could not find an address here. Choose another point.");
+  applyResolvedLocation(form, { ...result, lat: latitude, lon: longitude });
+}
+
+function openLocationMap(form) {
+  if (!window.L) {
+    showToast("The map could not load. Check your internet connection and try again.");
+    return;
+  }
+  const mapElement = document.getElementById(`${form.id}-map`);
+  mapElement.classList.remove("hidden");
+  let map = locationMaps.get(form);
+  if (!map) {
+    const fields = formLocationFields(form);
+    const hasCoordinates = fields.latitude.value && fields.longitude.value;
+    const center = hasCoordinates
+      ? [Number(fields.latitude.value), Number(fields.longitude.value)]
+      : [20, 0];
+    map = window.L.map(mapElement).setView(center, hasCoordinates ? 14 : 2);
+    window.L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    }).addTo(map);
+    map.on("click", async (event) => {
+      const { lat, lng } = event.latlng;
+      updateMapMarker(form, lat, lng);
+      fields.latitude.value = String(lat);
+      fields.longitude.value = String(lng);
+      try {
+        await reverseGeocode(form, lat, lng);
+      } catch (error) {
+        console.error("Could not find the address for the selected map location:", error);
+        showToast(error.message);
+      }
+    });
+    const currentLocationControl = window.L.control({ position: "topleft" });
+    currentLocationControl.onAdd = () => {
+      const button = window.L.DomUtil.create("button", "map-location-control");
+      button.type = "button";
+      button.title = "Use current location";
+      button.setAttribute("aria-label", "Use current location");
+      button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="7" /><circle cx="12" cy="12" r="2" /><path d="M12 2v3m0 14v3M2 12h3m14 0h3" /></svg>';
+      window.L.DomEvent.disableClickPropagation(button);
+      window.L.DomEvent.on(button, "click", () => useDeviceLocation(form));
+      return button;
+    };
+    currentLocationControl.addTo(map);
+    locationMaps.set(form, map);
+    activeLocationMap = map;
+    activeLocationMapForm = form;
+    if (hasCoordinates) updateMapMarker(form, center[0], center[1]);
+  }
+  window.setTimeout(() => map.invalidateSize(), 50);
+}
+
+async function useDeviceLocation(form) {
+  if (!navigator.geolocation) {
+    showToast("This browser does not support location access. Choose a point on the map instead.");
+    return;
+  }
+  try {
+    const position = await new Promise((resolve, reject) => {
+      navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 10000 });
+    });
+    openLocationMap(form);
+    const { latitude, longitude } = position.coords;
+    formLocationFields(form).latitude.value = String(latitude);
+    formLocationFields(form).longitude.value = String(longitude);
+    updateMapMarker(form, latitude, longitude);
+    await reverseGeocode(form, latitude, longitude);
+  } catch (error) {
+    console.error("Could not get the device location:", error);
+    showToast(error.code ? "Location access failed. Allow location access or choose a point on the map." : error.message);
+  }
+}
+
 function updateProfile() {
   const name = session?.name || "Welcome";
   const initials = name === "Welcome" ? "?" : name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase();
@@ -94,7 +251,7 @@ function requestRow(request) {
       <span class="request-icon">${icons[type?.icon || "general"]}</span>
       <div class="request-main">
         <div class="request-title">${escapeHtml(request.issue)}</div>
-        <div class="request-meta">${escapeHtml(request.location)} &middot; ${escapeHtml(request.date)}</div>
+        <div class="request-meta">${escapeHtml(request.location)} &middot; ${escapeHtml(request.serviceAddress)} &middot; ${escapeHtml(request.serviceCity)} &middot; ${escapeHtml(request.date)}</div>
         ${electricianDetails}${changeElectrician}
       </div>
       <span class="status-pill status-${escapeHtml(request.status)}">${statusLabel(request.status)}</span>
@@ -158,8 +315,9 @@ function electricianView() {
   document.getElementById("page-crumb").textContent = "Incoming requests";
   return `<div class="page-heading electrician-heading">
       <div><div class="eyebrow">Electrician workspace</div><h1>Incoming requests</h1><p>Review new jobs and keep customers in the loop.</p></div>
-      <span class="availability">Available for work</span>
+      <button class="secondary-button service-area-button" type="button" data-action="edit-service-area">${session.serviceCity ? `Service city: ${escapeHtml(session.serviceCity)} · Edit` : "Set your service city"}</button>
     </div>
+    ${session.serviceCity ? "" : `<div class="notification-summary">${icons.bell}<span>Set your service city and map location to receive nearby requests. Requests are first offered to the closest electrician, then shared with the city after 15 minutes.</span><button class="quiet-button" type="button" data-action="edit-service-area">Set location</button></div>`}
     <div class="stats-grid">
       <div class="stat-card"><span class="stat-icon warm">${icons.bolt}</span><div class="stat-copy"><span>Needs your response</span><strong>${pending.length}</strong></div></div>
       <div class="stat-card"><span class="stat-icon">${icons.general}</span><div class="stat-copy"><span>Accepted jobs</span><strong>${accepted}</strong></div></div>
@@ -182,7 +340,7 @@ function incomingCard(request) {
     ? `<p class="incoming-assignment">Your contact: ${escapeHtml(request.electricianPhone || "Phone not provided")} &middot; Estimated time: ${escapeHtml(request.estimatedResolution || "Not provided")}</p>`
     : "";
   return `<article class="incoming-card">
-    <div class="incoming-top"><span class="request-icon">${icons[type?.icon || "general"]}</span><div class="request-main"><div class="request-title">${escapeHtml(request.issue)} <span class="status-pill status-${escapeHtml(request.status)}">${statusLabel(request.status)}</span></div><div class="request-meta">${escapeHtml(request.location)} &middot; ${escapeHtml(request.date)}</div></div></div>
+    <div class="incoming-top"><span class="request-icon">${icons[type?.icon || "general"]}</span><div class="request-main"><div class="request-title">${escapeHtml(request.issue)} <span class="status-pill status-${escapeHtml(request.status)}">${statusLabel(request.status)}</span></div><div class="request-meta">${escapeHtml(request.location)} &middot; ${escapeHtml(request.serviceAddress)}, ${escapeHtml(request.serviceCity)} &middot; ${escapeHtml(request.date)}</div></div></div>
     ${request.description ? `<p class="incoming-description">${escapeHtml(request.description)}</p>` : ""}
     ${assignmentDetails}
     <div class="incoming-footer"><span class="customer-name">Requested by ${escapeHtml(request.customerName)}${request.phone ? ` &middot; ${escapeHtml(request.phone)}` : ""}</span>${actions}</div>
@@ -218,6 +376,13 @@ function openModal(content) {
 }
 
 function closeModal() {
+  if (activeLocationMap) activeLocationMap.remove();
+  if (activeLocationMapForm) {
+    locationMaps.delete(activeLocationMapForm);
+    locationMarkers.delete(activeLocationMapForm);
+  }
+  activeLocationMap = null;
+  activeLocationMapForm = null;
   document.getElementById("modal-backdrop")?.remove();
 }
 
@@ -310,7 +475,12 @@ function openRequestForm(presetIssue = "") {
     <div class="modal-heading"><div><h2 id="modal-title">Raise a service request</h2><p>Tell us what’s wrong and an electrician will get back to you.</p></div><button class="close-button" type="button" data-action="close-modal" aria-label="Close">&times;</button></div>
     <form id="request-form" class="form-grid">
       <div class="field"><label for="issue">What needs fixing?</label><select id="issue" name="issue" required><option value="">Choose an issue</option>${options}<option value="Other electrical issue">Other electrical issue</option></select></div>
-      <div class="field"><label for="location">Where is the issue?</label><input id="location" name="location" type="text" placeholder="e.g. Kitchen, second floor" required maxlength="100"></div>
+      <div class="field"><label for="location">Where in the home is the issue?</label><input id="location" name="location" type="text" placeholder="e.g. Kitchen, second floor" required maxlength="100"></div>
+      <div class="field"><label for="service-address">Service address</label><input id="service-address" name="serviceAddress" type="text" placeholder="Street address and building" autocomplete="street-address" required maxlength="250"></div>
+      <div class="field"><label for="service-city">City</label><input id="service-city" name="serviceCity" type="text" placeholder="City where service is needed" autocomplete="address-level2" required maxlength="120"></div>
+      ${locationPickerMarkup("request-form")}
+      <input type="hidden" name="latitude">
+      <input type="hidden" name="longitude">
       <div class="field"><label for="description">Tell us a little more <span class="form-hint">(optional)</span></label><textarea id="description" name="description" placeholder="For example: the fan switch in the main bedroom doesn't turn on the fan." maxlength="1000"></textarea></div>
       <div class="field"><label for="phone">Phone number <span class="form-hint">(optional)</span></label><input id="phone" name="phone" type="tel" placeholder="So your electrician can reach you" maxlength="30"></div>
       <div class="modal-footer"><button class="secondary-button" type="button" data-action="close-modal">Cancel</button><button class="primary-button" type="submit">Send request</button></div>
@@ -325,6 +495,19 @@ function openAcceptanceForm(id) {
       <div class="field"><label for="electrician-phone">Your phone number</label><input id="electrician-phone" name="electricianPhone" type="tel" autocomplete="tel" maxlength="30" required></div>
       <div class="field"><label for="estimated-resolution">Estimated time to resolve</label><input id="estimated-resolution" name="estimatedResolution" type="text" placeholder="e.g. 2–3 hours or by tomorrow" maxlength="100" required></div>
       <div class="modal-footer"><button class="secondary-button" type="button" data-action="close-modal">Cancel</button><button class="primary-button" type="submit">Confirm acceptance</button></div>
+    </form>
+  </section>`);
+}
+
+function openServiceAreaForm() {
+  openModal(`<section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-heading"><div><h2 id="modal-title">Your service location</h2><p>Set your base city and choose your location on the map so nearby jobs can be routed to you.</p></div><button class="close-button" type="button" data-action="close-modal" aria-label="Close">&times;</button></div>
+    <form id="service-area-form" class="form-grid">
+      <div class="field"><label for="electrician-service-city">Service city</label><input id="electrician-service-city" name="serviceCity" type="text" placeholder="City where you take jobs" autocomplete="address-level2" maxlength="120" required value="${escapeHtml(session.serviceCity || "")}"></div>
+      ${locationPickerMarkup("service-area-form")}
+      <input type="hidden" name="latitude" value="${session.serviceLatitude ?? ""}">
+      <input type="hidden" name="longitude" value="${session.serviceLongitude ?? ""}">
+      <div class="modal-footer"><button class="secondary-button" type="button" data-action="close-modal">Cancel</button><button class="primary-button" type="submit">Save service location</button></div>
     </form>
   </section>`);
 }
@@ -383,6 +566,19 @@ document.addEventListener("click", (event) => {
   if (action === "respond") respondToRequest(button.dataset.id, button.dataset.status);
   if (action === "change-electrician") confirmChangeElectrician(button.dataset.id);
   if (action === "confirm-change-electrician") changeElectrician(button.dataset.id);
+  if (action === "edit-service-area") openServiceAreaForm();
+  if (action === "open-map") openLocationMap(document.getElementById(button.dataset.form));
+  if (action === "find-address") {
+    const form = document.getElementById(button.dataset.form);
+    geocodeAddress(form).then(() => {
+      openLocationMap(form);
+      showToast("Address found. Check or adjust its pin on the map.");
+    }).catch((error) => {
+      console.error("Could not find the entered address on the map:", error);
+      showToast(error.message);
+    });
+  }
+  if (action === "use-device-location") useDeviceLocation(document.getElementById(button.dataset.form));
 });
 
 document.addEventListener("submit", async (event) => {
@@ -443,9 +639,20 @@ document.addEventListener("submit", async (event) => {
   if (event.target.id === "request-form") {
     event.preventDefault();
     const formData = new FormData(event.target);
+    const latitude = Number(formData.get("latitude"));
+    const longitude = Number(formData.get("longitude"));
+    if (!String(formData.get("latitude")) || !String(formData.get("longitude")) ||
+        !Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+      showToast("Find your typed address on the map or choose the service location on the map.");
+      return;
+    }
     const request = {
       issue: String(formData.get("issue")),
       location: String(formData.get("location")).trim(),
+      serviceAddress: String(formData.get("serviceAddress")).trim(),
+      serviceCity: String(formData.get("serviceCity")).trim(),
+      latitude,
+      longitude,
       description: String(formData.get("description")).trim(),
       phone: String(formData.get("phone")).trim(),
     };
@@ -485,11 +692,48 @@ document.addEventListener("submit", async (event) => {
       showToast(error.message);
     }
   }
+  if (event.target.id === "service-area-form") {
+    event.preventDefault();
+    const formData = new FormData(event.target);
+    const latitude = Number(formData.get("latitude"));
+    const longitude = Number(formData.get("longitude"));
+    if (!String(formData.get("latitude")) || !String(formData.get("longitude")) ||
+        !Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+      showToast("Choose your service location on the map before saving.");
+      return;
+    }
+    try {
+      const data = await apiRequest("/api/profile/service-area", {
+        method: "PUT",
+        body: JSON.stringify({
+          city: String(formData.get("serviceCity")).trim(),
+          latitude,
+          longitude,
+        }),
+      });
+      session = data.user;
+      closeModal();
+      render();
+      showToast("Your service location is saved.");
+    } catch (error) {
+      console.error("Could not save the electrician service location:", error);
+      showToast(error.message);
+    }
+  }
 });
 
 document.addEventListener("input", (event) => {
   const form = event.target.form;
-  if (!form || !["register-form", "login-form"].includes(form.id)) return;
+  if (!form) return;
+  if (["request-form", "service-area-form"].includes(form.id) &&
+      ["serviceAddress", "serviceCity"].includes(event.target.name)) {
+    formLocationFields(form).latitude.value = "";
+    formLocationFields(form).longitude.value = "";
+    locationMarkers.get(form)?.remove();
+    locationMarkers.delete(form);
+    return;
+  }
+  if (!["register-form", "login-form"].includes(form.id)) return;
   const errors = validateAuthForm(form);
   const fieldsToUpdate = new Set(
     [...form.querySelectorAll('[aria-invalid="true"]')].map((input) => input.name),
@@ -551,6 +795,17 @@ async function bootstrap() {
   }
   updateProfile();
   render();
+  window.setInterval(async () => {
+    if (session?.accountType !== "electrician" || document.hidden ||
+        document.getElementById("modal-backdrop")) return;
+    try {
+      await refreshRequests();
+      render();
+    } catch (error) {
+      console.error("Could not refresh incoming service requests:", error);
+      showToast(error.message);
+    }
+  }, 60_000);
 }
 
 bootstrap();

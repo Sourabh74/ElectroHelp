@@ -36,6 +36,9 @@ function publicAccount(account) {
     name: account.name,
     email: account.email,
     accountType: account.account_type,
+    serviceCity: account.service_city || null,
+    serviceLatitude: account.service_latitude ?? null,
+    serviceLongitude: account.service_longitude ?? null,
   };
 }
 
@@ -50,7 +53,8 @@ function requireAuth(accountType) {
 
     try {
       const result = await pool.query(
-        `SELECT a.id, a.name, a.email, a.account_type
+        `SELECT a.id, a.name, a.email, a.account_type, a.service_city,
+                a.service_latitude, a.service_longitude
          FROM ${schema}.sessions s
          JOIN ${schema}.accounts a ON a.id = s.account_id
          WHERE s.token_hash = $1 AND s.expires_at > NOW()`,
@@ -84,6 +88,8 @@ function mapRequest(row) {
     description: row.description,
     phone: row.phone,
     status: row.status,
+    serviceAddress: row.service_address,
+    serviceCity: row.service_city,
     customerName: row.customer_name,
     customerEmail: row.customer_email,
     electricianName: row.electrician_name,
@@ -95,10 +101,41 @@ function mapRequest(row) {
 }
 
 const requestColumns = `r.id, r.issue, r.location, r.description, r.phone, r.status,
-  r.electrician_phone, r.estimated_resolution, r.created_at,
+  r.electrician_phone, r.estimated_resolution, r.service_address, r.service_city,
+  r.created_at, r.dispatch_started_at,
   a.name AS customer_name, a.email AS customer_email, e.name AS electrician_name`;
 const requestJoins = `JOIN ${schema}.accounts a ON a.id = r.customer_id
   LEFT JOIN ${schema}.accounts e ON e.id = r.electrician_id`;
+const nearestElectricianId = `(SELECT candidate.id
+  FROM ${schema}.accounts candidate
+  WHERE candidate.account_type = 'electrician'
+    AND LOWER(BTRIM(candidate.service_city)) = LOWER(BTRIM(r.service_city))
+    AND candidate.service_latitude IS NOT NULL
+    AND candidate.service_longitude IS NOT NULL
+    AND NOT EXISTS (
+      SELECT 1 FROM ${schema}.service_request_excluded_electricians x
+      WHERE x.request_id = r.id AND x.electrician_id = candidate.id
+    )
+  ORDER BY 2 * 6371 * ASIN(SQRT(LEAST(1,
+    POWER(SIN(RADIANS(candidate.service_latitude - r.service_latitude) / 2), 2)
+    + COS(RADIANS(r.service_latitude)) * COS(RADIANS(candidate.service_latitude))
+      * POWER(SIN(RADIANS(candidate.service_longitude - r.service_longitude) / 2), 2)
+  ))), candidate.id
+  LIMIT 1)`;
+function dispatchVisibility(electricianId) {
+  return `EXISTS (
+    SELECT 1 FROM ${schema}.accounts eligible
+    WHERE eligible.id = ${electricianId}
+      AND eligible.account_type = 'electrician'
+      AND LOWER(BTRIM(eligible.service_city)) = LOWER(BTRIM(r.service_city))
+      AND NOT EXISTS (
+        SELECT 1 FROM ${schema}.service_request_excluded_electricians x
+        WHERE x.request_id = r.id AND x.electrician_id = eligible.id
+      )
+      AND (eligible.id = ${nearestElectricianId}
+        OR r.dispatch_started_at <= NOW() - INTERVAL '15 minutes')
+  )`;
+}
 
 app.get("/api/health", async (request, response, next) => {
   try {
@@ -178,7 +215,8 @@ app.post("/api/auth/login", async (request, response, next) => {
 
   try {
     const result = await pool.query(
-      `SELECT id, name, email, account_type, password_salt, password_hash
+      `SELECT id, name, email, account_type, password_salt, password_hash,
+              service_city, service_latitude, service_longitude
        FROM ${schema}.accounts
        WHERE email = $1 AND account_type = $2`,
       [email.trim().toLowerCase(), accountType],
@@ -231,13 +269,36 @@ app.get("/api/auth/me", async (request, response, next) => {
   if (!token) return response.json({ user: null });
   try {
     const result = await pool.query(
-      `SELECT a.id, a.name, a.email, a.account_type
+      `SELECT a.id, a.name, a.email, a.account_type, a.service_city,
+              a.service_latitude, a.service_longitude
        FROM ${schema}.sessions s
        JOIN ${schema}.accounts a ON a.id = s.account_id
        WHERE s.token_hash = $1 AND s.expires_at > NOW()`,
       [hashToken(token)],
     );
     response.json({ user: result.rowCount ? publicAccount(result.rows[0]) : null });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.put("/api/profile/service-area", requireAuth("electrician"), async (request, response, next) => {
+  const { city, latitude, longitude } = request.body || {};
+  if (!validateText(city, 120, true) ||
+      typeof latitude !== "number" || !Number.isFinite(latitude) || latitude < -90 || latitude > 90 ||
+      typeof longitude !== "number" || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+    return sendError(response, 400, "Choose a valid service city and map location.");
+  }
+
+  try {
+    const result = await pool.query(
+      `UPDATE ${schema}.accounts
+       SET service_city = $1, service_latitude = $2, service_longitude = $3
+       WHERE id = $4 AND account_type = 'electrician'
+       RETURNING id, name, email, account_type, service_city, service_latitude, service_longitude`,
+      [city.trim(), latitude, longitude, request.user.id],
+    );
+    response.json({ user: publicAccount(result.rows[0]) });
   } catch (error) {
     next(error);
   }
@@ -250,10 +311,8 @@ app.get("/api/requests", requireAuth(), async (request, response, next) => {
         `SELECT ${requestColumns}
          FROM ${schema}.service_requests r
          ${requestJoins}
-         WHERE (r.status = 'pending' AND NOT EXISTS (
-           SELECT 1 FROM ${schema}.service_request_excluded_electricians x
-           WHERE x.request_id = r.id AND x.electrician_id = $1
-         )) OR r.electrician_id = $1
+         WHERE r.electrician_id = $1
+           OR (r.status = 'pending' AND ${dispatchVisibility("$1")})
          ORDER BY r.created_at DESC`,
         [request.user.id],
       )
@@ -272,18 +331,26 @@ app.get("/api/requests", requireAuth(), async (request, response, next) => {
 });
 
 app.post("/api/requests", requireAuth("customer"), async (request, response, next) => {
-  const { issue, location, description = "", phone = "" } = request.body || {};
+  const {
+    issue, location, serviceAddress, serviceCity, latitude, longitude, description = "", phone = "",
+  } = request.body || {};
   if (!validateText(issue, 120, true) || !validateText(location, 100, true) ||
+      !validateText(serviceAddress, 250, true) || !validateText(serviceCity, 120, true) ||
+      typeof latitude !== "number" || !Number.isFinite(latitude) || latitude < -90 || latitude > 90 ||
+      typeof longitude !== "number" || !Number.isFinite(longitude) || longitude < -180 || longitude > 180 ||
       !validateText(description, 1000) || !validateText(phone, 30)) {
-    return sendError(response, 400, "Enter a valid issue and location. Check the maximum field lengths.");
+    return sendError(response, 400, "Enter a valid issue, location, address and city, and choose the address on the map.");
   }
 
   try {
     const result = await pool.query(
-      `INSERT INTO ${schema}.service_requests (customer_id, issue, location, description, phone)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO ${schema}.service_requests
+         (customer_id, issue, location, service_address, service_city, service_latitude,
+          service_longitude, description, phone)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        RETURNING id`,
-      [request.user.id, issue.trim(), location.trim(), description.trim(), phone.trim()],
+      [request.user.id, issue.trim(), location.trim(), serviceAddress.trim(), serviceCity.trim(),
+        latitude, longitude, description.trim(), phone.trim()],
     );
     const created = await pool.query(
       `SELECT ${requestColumns}
@@ -311,8 +378,26 @@ app.patch("/api/requests/:id/status", requireAuth("electrician"), async (request
     return sendError(response, 400, "Enter a valid phone number and estimated resolution time.");
   }
 
-  const allowedPrevious = status === "completed" ? "accepted" : "pending";
   try {
+    if (status === "declined") {
+      const declined = await pool.query(
+        `INSERT INTO ${schema}.service_request_excluded_electricians (request_id, electrician_id)
+         SELECT r.id, $2
+         FROM ${schema}.service_requests r
+         WHERE r.id = $1 AND r.status = 'pending' AND ${dispatchVisibility("$2")}
+         ON CONFLICT (request_id, electrician_id) DO NOTHING
+         RETURNING request_id`,
+        [requestId, request.user.id],
+      );
+      if (declined.rowCount === 0) {
+        const exists = await pool.query(`SELECT 1 FROM ${schema}.service_requests WHERE id = $1`, [requestId]);
+        return sendError(response, exists.rowCount ? 409 : 404,
+          exists.rowCount ? "This request is no longer available to you." : "Request not found.");
+      }
+      return response.json({ ok: true });
+    }
+
+    const allowedPrevious = status === "completed" ? "accepted" : "pending";
     const result = await pool.query(
       `UPDATE ${schema}.service_requests AS r
        SET status = $1,
@@ -322,10 +407,7 @@ app.patch("/api/requests/:id/status", requireAuth("electrician"), async (request
            updated_at = NOW()
        WHERE r.id = $2 AND r.status = $3
          AND (($1 = 'completed' AND r.electrician_id = $4)
-           OR ($1 != 'completed' AND r.electrician_id IS NULL AND NOT EXISTS (
-             SELECT 1 FROM ${schema}.service_request_excluded_electricians x
-             WHERE x.request_id = r.id AND x.electrician_id = $4
-           )))
+           OR ($1 = 'accepted' AND r.electrician_id IS NULL AND ${dispatchVisibility("$4")}))
        RETURNING r.id`,
       [status, request.params.id, allowedPrevious, request.user.id,
         status === "accepted" ? electricianPhone.trim() : null,
@@ -388,7 +470,7 @@ app.post("/api/requests/:id/change-electrician", requireAuth("customer"), async 
     await client.query(
       `UPDATE ${schema}.service_requests
        SET status = 'pending', electrician_id = NULL, electrician_phone = NULL,
-           estimated_resolution = NULL, updated_at = NOW()
+           estimated_resolution = NULL, dispatch_started_at = NOW(), updated_at = NOW()
        WHERE id = $1`,
       [requestId],
     );
