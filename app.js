@@ -223,7 +223,8 @@ function updateProfile() {
     : "Sign in to get started";
   document.getElementById("user-avatar").textContent = initials;
   document.getElementById("top-avatar").textContent = initials;
-  document.getElementById("profile-button").setAttribute("aria-label", session ? `${name}, sign out` : "Sign in");
+  document.getElementById("profile-button").classList.toggle("hidden", Boolean(session));
+  document.getElementById("logout-button").classList.toggle("hidden", !session);
 }
 
 function setView(view) {
@@ -749,22 +750,21 @@ document.addEventListener("input", (event) => {
 });
 
 document.querySelectorAll(".nav-link").forEach((link) => link.addEventListener("click", () => setView(link.dataset.view)));
-document.getElementById("profile-button").addEventListener("click", async () => {
-  if (session) {
-    try {
-      await apiRequest("/api/auth/logout", { method: "POST" });
-      session = null;
-      requests = [];
-      updateProfile();
-      activeView = "home";
-      render();
-      showToast("You have signed out.");
-    } catch (error) {
-      console.error("Could not sign out:", error);
-      showToast(error.message);
-    }
-  } else {
-    openAuth("customer", "login");
+document.getElementById("profile-button").addEventListener("click", () => {
+  openAuth("customer", "login");
+});
+document.getElementById("logout-button").addEventListener("click", async () => {
+  try {
+    await apiRequest("/api/auth/logout", { method: "POST" });
+    session = null;
+    requests = [];
+    updateProfile();
+    activeView = "home";
+    render();
+    showToast("You have signed out.");
+  } catch (error) {
+    console.error("Could not sign out:", error);
+    showToast(error.message);
   }
 });
 document.getElementById("notification-button").addEventListener("click", () => {
