@@ -7,8 +7,16 @@ CREATE TABLE IF NOT EXISTS __SCHEMA__.accounts (
   account_type VARCHAR(16) NOT NULL CHECK (account_type IN ('customer', 'electrician')),
   password_salt BYTEA NOT NULL,
   password_hash BYTEA NOT NULL,
+  service_city VARCHAR(120),
+  service_latitude DOUBLE PRECISION,
+  service_longitude DOUBLE PRECISION,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE __SCHEMA__.accounts
+  ADD COLUMN IF NOT EXISTS service_city VARCHAR(120),
+  ADD COLUMN IF NOT EXISTS service_latitude DOUBLE PRECISION,
+  ADD COLUMN IF NOT EXISTS service_longitude DOUBLE PRECISION;
 
 CREATE TABLE IF NOT EXISTS __SCHEMA__.sessions (
   token_hash BYTEA PRIMARY KEY,
@@ -30,6 +38,11 @@ CREATE TABLE IF NOT EXISTS __SCHEMA__.service_requests (
   phone VARCHAR(30) NOT NULL DEFAULT '',
   electrician_phone VARCHAR(30),
   estimated_resolution VARCHAR(100),
+  service_address VARCHAR(250) NOT NULL DEFAULT '',
+  service_city VARCHAR(120) NOT NULL DEFAULT '',
+  service_latitude DOUBLE PRECISION,
+  service_longitude DOUBLE PRECISION,
+  dispatch_started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   status VARCHAR(16) NOT NULL DEFAULT 'pending'
     CHECK (status IN ('pending', 'accepted', 'declined', 'completed')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -39,7 +52,12 @@ CREATE TABLE IF NOT EXISTS __SCHEMA__.service_requests (
 ALTER TABLE __SCHEMA__.service_requests
   ADD COLUMN IF NOT EXISTS electrician_id BIGINT REFERENCES __SCHEMA__.accounts(id) ON DELETE SET NULL,
   ADD COLUMN IF NOT EXISTS electrician_phone VARCHAR(30),
-  ADD COLUMN IF NOT EXISTS estimated_resolution VARCHAR(100);
+  ADD COLUMN IF NOT EXISTS estimated_resolution VARCHAR(100),
+  ADD COLUMN IF NOT EXISTS service_address VARCHAR(250) NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS service_city VARCHAR(120) NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS service_latitude DOUBLE PRECISION,
+  ADD COLUMN IF NOT EXISTS service_longitude DOUBLE PRECISION,
+  ADD COLUMN IF NOT EXISTS dispatch_started_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
 CREATE TABLE IF NOT EXISTS __SCHEMA__.service_request_excluded_electricians (
   request_id BIGINT NOT NULL REFERENCES __SCHEMA__.service_requests(id) ON DELETE CASCADE,

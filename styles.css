@@ -99,6 +99,7 @@ a { color: inherit; text-decoration: none; }
 .request-main { min-width: 0; flex: 1; }
 .request-title { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; font-size: 11px; font-weight: 700; }
 .request-meta { color: var(--muted); font-size: 10px; }
+.request-row .request-meta, .incoming-top .request-meta { line-height: 1.5; }
 .request-assignment { margin-top: 6px; color: #536a57; font-size: 10px; line-height: 1.5; }
 .request-assignment a { color: var(--green); font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
 .change-electrician-button { display: block; margin-top: 6px; padding: 0; border: 0; background: none; color: #6e756d; font-size: 9px; font-weight: 600; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
@@ -136,6 +137,7 @@ a { color: inherit; text-decoration: none; }
 .quick-card span:last-child { margin-top: 4px; color: var(--muted); font-size: 9px; }
 
 .electrician-heading { align-items: center; }
+.service-area-button { font-size: 10px; white-space: nowrap; }
 .electrician-heading .availability { display: inline-flex; align-items: center; gap: 7px; padding: 7px 10px; border: 1px solid #dcebdd; border-radius: 20px; background: #f2f7f2; color: #4c7855; font-size: 10px; font-weight: 600; }
 .availability::before { width: 7px; height: 7px; border-radius: 50%; background: #67a86e; content: ""; }
 .incoming-card { padding: 17px 19px; border-bottom: 1px solid #eff0ed; }
@@ -152,6 +154,15 @@ a { color: inherit; text-decoration: none; }
 .request-actions .primary-button { border: 1px solid var(--green); }
 .request-actions .decline-button { border: 1px solid #e7e9e5; background: #fff; color: #757b73; }
 .request-actions .decline-button:hover { border-color: #e9c9c4; color: #ad6155; }
+.location-picker { display: grid; gap: 9px; }
+.location-picker > .form-hint { line-height: 1.5; }
+.location-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.location-tools button { min-height: 32px; padding: 0 10px; font-size: 9px; }
+.map-canvas { width: 100%; height: 245px; border: 1px solid #e5e8e2; border-radius: 7px; z-index: 0; }
+.map-location-control { display: grid; width: 34px; height: 34px; place-items: center; border: 1px solid #dfe4dc; border-radius: 5px; background: #fff; color: var(--green); box-shadow: 0 1px 5px rgba(0, 0, 0, .25); cursor: pointer; }
+.map-location-control:hover { background: #f3f7f2; }
+.map-location-control svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.notification-summary > span { flex: 1; line-height: 1.5; }
 .notification-summary { display: flex; align-items: center; gap: 10px; margin: 0 0 19px; padding: 13px 15px; border: 1px solid #e2ece2; border-radius: 8px; background: #f3f8f2; color: #47694d; font-size: 10px; }
 .notification-summary svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 

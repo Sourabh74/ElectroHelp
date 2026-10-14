@@ -15,14 +15,14 @@ Set either `DATABASE_URL` to a PostgreSQL connection URL, or configure `DB_HOST`
 
 ## Database tables
 
-- `electrician.accounts` stores customer and electrician accounts, with scrypt password hashes.
+- `electrician.accounts` stores customer and electrician accounts, with scrypt password hashes and electrician service-area locations.
 - `electrician.sessions` stores hashed session tokens and expiration times.
-- `electrician.service_requests` stores repair details, customer ownership, status, assigned electrician contact details, and the estimated resolution time.
+- `electrician.service_requests` stores repair details, the service address and map coordinates, customer ownership, status, assigned electrician contact details, and the estimated resolution time.
 - `electrician.service_request_excluded_electricians` tracks electricians a customer has replaced so the same electrician is not offered that request again.
 
-Public registration is limited to customer accounts. Electrician accounts must be provisioned by a trusted administrator before they can log in. The API enforces account types: customers can create and view their own requests; electricians can review incoming requests and accept, decline, or complete them.
+The service request form accepts a manually entered address or lets the customer find or select it on an OpenStreetMap map. Selecting a map location sends its coordinates to OpenStreetMap's Nominatim service to resolve the address; the form explains this to the customer. Electricians set their service city and map location in their workspace. Requests are shown only to electricians in the same city: the closest one is offered the request first, and after 15 minutes the request is shown to the rest of the city. Declining or being replaced excludes that electrician from the same request.
 
-When accepting a request, an electrician provides a phone number and estimated resolution time. Customers can view those details and request a different electrician while the job is accepted. The request returns to the available queue, excluding the electrician the customer replaced. Database initialization adds the assignment fields to existing installations.
+When accepting a request, an electrician provides a phone number and estimated resolution time. Customers can view those details and request a different electrician while the job is accepted. Database initialization adds the location and dispatch fields to existing installations.
 
 Keep `.env` private and do not commit database credentials. Use a dedicated, least-privileged database account for any shared or deployed environment.
 
