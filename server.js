@@ -86,13 +86,19 @@ function mapRequest(row) {
     status: row.status,
     customerName: row.customer_name,
     customerEmail: row.customer_email,
+    electricianName: row.electrician_name,
+    electricianPhone: row.electrician_phone,
+    estimatedResolution: row.estimated_resolution,
     createdAt: row.created_at.toISOString(),
     date: new Intl.DateTimeFormat("en", { month: "short", day: "numeric", year: "numeric" }).format(row.created_at),
   };
 }
 
 const requestColumns = `r.id, r.issue, r.location, r.description, r.phone, r.status,
-  r.created_at, a.name AS customer_name, a.email AS customer_email`;
+  r.electrician_phone, r.estimated_resolution, r.created_at,
+  a.name AS customer_name, a.email AS customer_email, e.name AS electrician_name`;
+const requestJoins = `JOIN ${schema}.accounts a ON a.id = r.customer_id
+  LEFT JOIN ${schema}.accounts e ON e.id = r.electrician_id`;
 
 app.get("/api/health", async (request, response, next) => {
   try {
@@ -124,8 +130,8 @@ app.post("/api/auth/register", async (request, response, next) => {
   if (Object.keys(fieldErrors).length > 0) {
     return response.status(400).json({ error: "Please correct the highlighted fields.", fieldErrors });
   }
-  if (accountType !== "customer") {
-    return sendError(response, 400, "Only customer accounts can be created here.");
+  if (accountType !== "customer" && accountType !== "electrician") {
+    return sendError(response, 400, "Only customer and electrician accounts can be created here.");
   }
 
   try {
@@ -243,13 +249,18 @@ app.get("/api/requests", requireAuth(), async (request, response, next) => {
       ? await pool.query(
         `SELECT ${requestColumns}
          FROM ${schema}.service_requests r
-         JOIN ${schema}.accounts a ON a.id = r.customer_id
+         ${requestJoins}
+         WHERE (r.status = 'pending' AND NOT EXISTS (
+           SELECT 1 FROM ${schema}.service_request_excluded_electricians x
+           WHERE x.request_id = r.id AND x.electrician_id = $1
+         )) OR r.electrician_id = $1
          ORDER BY r.created_at DESC`,
+        [request.user.id],
       )
       : await pool.query(
         `SELECT ${requestColumns}
          FROM ${schema}.service_requests r
-         JOIN ${schema}.accounts a ON a.id = r.customer_id
+         ${requestJoins}
          WHERE r.customer_id = $1
          ORDER BY r.created_at DESC`,
         [request.user.id],
@@ -277,7 +288,7 @@ app.post("/api/requests", requireAuth("customer"), async (request, response, nex
     const created = await pool.query(
       `SELECT ${requestColumns}
        FROM ${schema}.service_requests r
-       JOIN ${schema}.accounts a ON a.id = r.customer_id
+       ${requestJoins}
        WHERE r.id = $1`,
       [result.rows[0].id],
     );
@@ -288,22 +299,37 @@ app.post("/api/requests", requireAuth("customer"), async (request, response, nex
 });
 
 app.patch("/api/requests/:id/status", requireAuth("electrician"), async (request, response, next) => {
-  const { status } = request.body || {};
+  const { status, electricianPhone, estimatedResolution } = request.body || {};
   const requestId = request.params.id;
   if (!/^[1-9]\d{0,18}$/.test(requestId) ||
       BigInt(requestId) > 9223372036854775807n ||
       !["accepted", "declined", "completed"].includes(status)) {
     return sendError(response, 400, "The request id or status is invalid.");
   }
+  if (status === "accepted" &&
+      (!validateText(electricianPhone, 30, true) || !validateText(estimatedResolution, 100, true))) {
+    return sendError(response, 400, "Enter a valid phone number and estimated resolution time.");
+  }
 
   const allowedPrevious = status === "completed" ? "accepted" : "pending";
   try {
     const result = await pool.query(
-      `UPDATE ${schema}.service_requests
-       SET status = $1, updated_at = NOW()
-       WHERE id = $2 AND status = $3
-       RETURNING id`,
-      [status, request.params.id, allowedPrevious],
+      `UPDATE ${schema}.service_requests AS r
+       SET status = $1,
+           electrician_id = CASE WHEN $1 = 'accepted' THEN $4 ELSE electrician_id END,
+           electrician_phone = CASE WHEN $1 = 'accepted' THEN $5 ELSE electrician_phone END,
+           estimated_resolution = CASE WHEN $1 = 'accepted' THEN $6 ELSE estimated_resolution END,
+           updated_at = NOW()
+       WHERE r.id = $2 AND r.status = $3
+         AND (($1 = 'completed' AND r.electrician_id = $4)
+           OR ($1 != 'completed' AND r.electrician_id IS NULL AND NOT EXISTS (
+             SELECT 1 FROM ${schema}.service_request_excluded_electricians x
+             WHERE x.request_id = r.id AND x.electrician_id = $4
+           )))
+       RETURNING r.id`,
+      [status, request.params.id, allowedPrevious, request.user.id,
+        status === "accepted" ? electricianPhone.trim() : null,
+        status === "accepted" ? estimatedResolution.trim() : null],
     );
     if (result.rowCount === 0) {
       const exists = await pool.query(`SELECT 1 FROM ${schema}.service_requests WHERE id = $1`, [request.params.id]);
@@ -314,13 +340,65 @@ app.patch("/api/requests/:id/status", requireAuth("electrician"), async (request
     const updated = await pool.query(
       `SELECT ${requestColumns}
        FROM ${schema}.service_requests r
-       JOIN ${schema}.accounts a ON a.id = r.customer_id
+       ${requestJoins}
        WHERE r.id = $1`,
       [request.params.id],
     );
     response.json({ request: mapRequest(updated.rows[0]) });
   } catch (error) {
     next(error);
+  }
+});
+
+app.post("/api/requests/:id/change-electrician", requireAuth("customer"), async (request, response, next) => {
+  const requestId = request.params.id;
+  if (!/^[1-9]\d{0,18}$/.test(requestId) || BigInt(requestId) > 9223372036854775807n) {
+    return sendError(response, 400, "The request id is invalid.");
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const current = await client.query(
+      `SELECT id, electrician_id
+       FROM ${schema}.service_requests
+       WHERE id = $1 AND customer_id = $2 AND status = 'accepted'
+       FOR UPDATE`,
+      [requestId, request.user.id],
+    );
+    if (current.rowCount === 0) {
+      const exists = await client.query(
+        `SELECT 1 FROM ${schema}.service_requests WHERE id = $1 AND customer_id = $2`,
+        [requestId, request.user.id],
+      );
+      await client.query("ROLLBACK");
+      return sendError(response, exists.rowCount ? 409 : 404,
+        exists.rowCount ? "This request cannot be changed right now." : "Request not found.");
+    }
+
+    const assignedElectricianId = current.rows[0].electrician_id;
+    if (assignedElectricianId) {
+      await client.query(
+        `INSERT INTO ${schema}.service_request_excluded_electricians (request_id, electrician_id)
+         VALUES ($1, $2)
+         ON CONFLICT (request_id, electrician_id) DO NOTHING`,
+        [requestId, assignedElectricianId],
+      );
+    }
+    await client.query(
+      `UPDATE ${schema}.service_requests
+       SET status = 'pending', electrician_id = NULL, electrician_phone = NULL,
+           estimated_resolution = NULL, updated_at = NOW()
+       WHERE id = $1`,
+      [requestId],
+    );
+    await client.query("COMMIT");
+    response.json({ ok: true });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    next(error);
+  } finally {
+    client.release();
   }
 });
 

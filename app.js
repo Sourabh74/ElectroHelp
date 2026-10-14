@@ -83,12 +83,19 @@ function statusLabel(status) {
 
 function requestRow(request) {
   const type = serviceTypes.find((item) => item.name === request.issue);
+  const electricianDetails = request.electricianName
+    ? `<div class="request-assignment">Electrician: ${escapeHtml(request.electricianName)}${request.electricianPhone ? ` &middot; <a href="tel:${escapeHtml(request.electricianPhone)}">${escapeHtml(request.electricianPhone)}</a>` : ""}${request.estimatedResolution ? ` &middot; Estimated time: ${escapeHtml(request.estimatedResolution)}` : ""}</div>`
+    : "";
+  const changeElectrician = request.status === "accepted"
+    ? `<button class="change-electrician-button" type="button" data-action="change-electrician" data-id="${escapeHtml(request.id)}">Change electrician</button>`
+    : "";
   return `
     <div class="request-row">
       <span class="request-icon">${icons[type?.icon || "general"]}</span>
       <div class="request-main">
         <div class="request-title">${escapeHtml(request.issue)}</div>
         <div class="request-meta">${escapeHtml(request.location)} &middot; ${escapeHtml(request.date)}</div>
+        ${electricianDetails}${changeElectrician}
       </div>
       <span class="status-pill status-${escapeHtml(request.status)}">${statusLabel(request.status)}</span>
     </div>`;
@@ -171,9 +178,13 @@ function incomingCard(request) {
     : request.status === "accepted"
       ? `<div class="request-actions"><button class="secondary-button" type="button" data-action="respond" data-id="${escapeHtml(request.id)}" data-status="completed">Mark complete</button></div>`
       : "";
+  const assignmentDetails = request.electricianName
+    ? `<p class="incoming-assignment">Your contact: ${escapeHtml(request.electricianPhone || "Phone not provided")} &middot; Estimated time: ${escapeHtml(request.estimatedResolution || "Not provided")}</p>`
+    : "";
   return `<article class="incoming-card">
     <div class="incoming-top"><span class="request-icon">${icons[type?.icon || "general"]}</span><div class="request-main"><div class="request-title">${escapeHtml(request.issue)} <span class="status-pill status-${escapeHtml(request.status)}">${statusLabel(request.status)}</span></div><div class="request-meta">${escapeHtml(request.location)} &middot; ${escapeHtml(request.date)}</div></div></div>
     ${request.description ? `<p class="incoming-description">${escapeHtml(request.description)}</p>` : ""}
+    ${assignmentDetails}
     <div class="incoming-footer"><span class="customer-name">Requested by ${escapeHtml(request.customerName)}${request.phone ? ` &middot; ${escapeHtml(request.phone)}` : ""}</span>${actions}</div>
   </article>`;
 }
@@ -307,7 +318,29 @@ function openRequestForm(presetIssue = "") {
   </section>`);
 }
 
+function openAcceptanceForm(id) {
+  openModal(`<section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-heading"><div><h2 id="modal-title">Accept this request</h2><p>Share your contact number and expected time to resolve the issue.</p></div><button class="close-button" type="button" data-action="close-modal" aria-label="Close">&times;</button></div>
+    <form id="accept-request-form" class="form-grid" data-id="${escapeHtml(id)}">
+      <div class="field"><label for="electrician-phone">Your phone number</label><input id="electrician-phone" name="electricianPhone" type="tel" autocomplete="tel" maxlength="30" required></div>
+      <div class="field"><label for="estimated-resolution">Estimated time to resolve</label><input id="estimated-resolution" name="estimatedResolution" type="text" placeholder="e.g. 2–3 hours or by tomorrow" maxlength="100" required></div>
+      <div class="modal-footer"><button class="secondary-button" type="button" data-action="close-modal">Cancel</button><button class="primary-button" type="submit">Confirm acceptance</button></div>
+    </form>
+  </section>`);
+}
+
+function confirmChangeElectrician(id) {
+  openModal(`<section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-heading"><div><h2 id="modal-title">Change electrician?</h2><p>Your request will be offered to another electrician. The current electrician won’t be assigned to it again.</p></div><button class="close-button" type="button" data-action="close-modal" aria-label="Close">&times;</button></div>
+    <div class="modal-footer"><button class="secondary-button" type="button" data-action="close-modal">Keep electrician</button><button class="primary-button" type="button" data-action="confirm-change-electrician" data-id="${escapeHtml(id)}">Find another electrician</button></div>
+  </section>`);
+}
+
 async function respondToRequest(id, status) {
+  if (status === "accepted") {
+    openAcceptanceForm(id);
+    return;
+  }
   try {
     await apiRequest(`/api/requests/${encodeURIComponent(id)}/status`, {
       method: "PATCH",
@@ -319,6 +352,19 @@ async function respondToRequest(id, status) {
     showToast(status === "accepted" ? "Request accepted. The customer can see your response." : status === "declined" ? "Request declined. The customer can see your response." : "Job marked complete.");
   } catch (error) {
     console.error("Could not update the service request:", error);
+    showToast(error.message);
+  }
+}
+
+async function changeElectrician(id) {
+  try {
+    await apiRequest(`/api/requests/${encodeURIComponent(id)}/change-electrician`, { method: "POST" });
+    await refreshRequests();
+    closeModal();
+    render();
+    showToast("Request reopened. We’ll find another electrician for you.");
+  } catch (error) {
+    console.error("Could not change the assigned electrician:", error);
     showToast(error.message);
   }
 }
@@ -335,6 +381,8 @@ document.addEventListener("click", (event) => {
   if (action === "quick-request") openRequestForm(button.dataset.issue);
   if (action === "my-requests") setView("requests");
   if (action === "respond") respondToRequest(button.dataset.id, button.dataset.status);
+  if (action === "change-electrician") confirmChangeElectrician(button.dataset.id);
+  if (action === "confirm-change-electrician") changeElectrician(button.dataset.id);
 });
 
 document.addEventListener("submit", async (event) => {
@@ -410,6 +458,30 @@ document.addEventListener("submit", async (event) => {
       showToast("Request sent. An electrician will review it shortly.");
     } catch (error) {
       console.error("Could not send service request:", error);
+      showToast(error.message);
+    }
+  }
+  if (event.target.id === "accept-request-form") {
+    event.preventDefault();
+    const form = event.target;
+    if (!form.reportValidity()) return;
+    const formData = new FormData(form);
+    try {
+      await apiRequest(`/api/requests/${encodeURIComponent(form.dataset.id)}/status`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          status: "accepted",
+          electricianPhone: String(formData.get("electricianPhone")).trim(),
+          estimatedResolution: String(formData.get("estimatedResolution")).trim(),
+        }),
+      });
+      await refreshRequests();
+      closeModal();
+      document.getElementById("notification-dot").classList.remove("hidden");
+      render();
+      showToast("Request accepted. The customer can see your contact details and estimate.");
+    } catch (error) {
+      console.error("Could not accept the service request:", error);
       showToast(error.message);
     }
   }
