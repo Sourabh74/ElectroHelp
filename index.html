@@ -48,11 +48,17 @@
             <span>We’re here if you need us.</span>
             <a href="mailto:hello@current.example">Get in touch <span aria-hidden="true">↗</span></a>
           </div>
-          <button class="profile-button" id="profile-button" type="button" aria-label="Sign in">
-            <span class="avatar" id="user-avatar">?</span>
-            <span class="profile-copy"><strong id="user-name">Welcome</strong><small id="user-role">Sign in to get started</small></span>
-            <svg class="profile-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4" /></svg>
-          </button>
+          <div class="profile-panel">
+            <div class="profile-identity">
+              <span class="avatar" id="user-avatar">?</span>
+              <span class="profile-copy"><strong id="user-name">Welcome</strong><small id="user-role">Sign in to get started</small></span>
+            </div>
+            <button class="profile-action" id="profile-button" type="button">Sign in</button>
+            <button class="profile-action hidden" id="logout-button" type="button">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 17l5-5-5-5m5 5H3m9-9h7a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-7" /></svg>
+              <span>Log out</span>
+            </button>
+          </div>
         </div>
       </aside>
 
