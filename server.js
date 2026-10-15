@@ -214,6 +214,8 @@ function mapRequest(row) {
     serviceAddress: row.service_address,
     addressInstructions: row.service_address_instructions,
     serviceCity: row.service_city,
+    latitude: row.service_latitude,
+    longitude: row.service_longitude,
     customerName: row.customer_name,
     customerEmail: row.customer_email,
     electricianName: row.electrician_name,
@@ -226,7 +228,7 @@ function mapRequest(row) {
 
 const requestColumns = `r.id, r.issue, r.location, r.description, r.phone, r.status,
   r.electrician_phone, r.estimated_resolution, r.service_address,
-  r.service_address_instructions, r.service_city,
+  r.service_address_instructions, r.service_city, r.service_latitude, r.service_longitude,
   r.created_at, r.dispatch_started_at,
   a.name AS customer_name, a.email AS customer_email, e.name AS electrician_name`;
 const requestJoins = `JOIN ${schema}.accounts a ON a.id = r.customer_id
@@ -596,17 +598,35 @@ app.get("/api/requests", requireAuth(), async (request, response, next) => {
   }
 });
 
-app.post("/api/requests", requireAuth("customer"), async (request, response, next) => {
+function parseServiceRequest(body = {}) {
   const {
     issue, location, serviceAddress, addressInstructions = "", serviceCity,
     latitude, longitude, description = "", phone = "",
-  } = request.body || {};
+  } = body || {};
   if (!validateText(issue, 120, true) || !validateText(location, 100, true) ||
       !validateText(serviceAddress, 250, true) || !validateText(serviceCity, 120, true) ||
       !validateText(addressInstructions, 500) ||
       typeof latitude !== "number" || !Number.isFinite(latitude) || latitude < -90 || latitude > 90 ||
       typeof longitude !== "number" || !Number.isFinite(longitude) || longitude < -180 || longitude > 180 ||
       !validateText(description, 1000) || !validateText(phone, 30)) {
+    return null;
+  }
+  return {
+    issue: issue.trim(),
+    location: location.trim(),
+    serviceAddress: serviceAddress.trim(),
+    addressInstructions: addressInstructions.trim(),
+    serviceCity: serviceCity.trim(),
+    latitude,
+    longitude,
+    description: description.trim(),
+    phone: phone.trim(),
+  };
+}
+
+app.post("/api/requests", requireAuth("customer"), async (request, response, next) => {
+  const serviceRequest = parseServiceRequest(request.body);
+  if (!serviceRequest) {
     return sendError(response, 400, "Enter a valid issue, location, address and city, and choose the address on the map.");
   }
 
@@ -617,8 +637,9 @@ app.post("/api/requests", requireAuth("customer"), async (request, response, nex
           service_city, service_latitude, service_longitude, description, phone)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        RETURNING id`,
-      [request.user.id, issue.trim(), location.trim(), serviceAddress.trim(), addressInstructions.trim(),
-        serviceCity.trim(), latitude, longitude, description.trim(), phone.trim()],
+      [request.user.id, serviceRequest.issue, serviceRequest.location, serviceRequest.serviceAddress,
+        serviceRequest.addressInstructions, serviceRequest.serviceCity, serviceRequest.latitude,
+        serviceRequest.longitude, serviceRequest.description, serviceRequest.phone],
     );
     const created = await pool.query(
       `SELECT ${requestColumns}
@@ -628,6 +649,70 @@ app.post("/api/requests", requireAuth("customer"), async (request, response, nex
       [result.rows[0].id],
     );
     response.status(201).json({ request: mapRequest(created.rows[0]) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.put("/api/requests/:id", requireAuth("customer"), async (request, response, next) => {
+  const requestId = request.params.id;
+  if (!/^[1-9]\d{0,18}$/.test(requestId) || BigInt(requestId) > 9223372036854775807n) {
+    return sendError(response, 400, "The request id is invalid.");
+  }
+  const serviceRequest = parseServiceRequest(request.body);
+  if (!serviceRequest) {
+    return sendError(response, 400, "Enter a valid issue, location, address and city, and choose the address on the map.");
+  }
+
+  try {
+    const result = await pool.query(
+      `UPDATE ${schema}.service_requests
+       SET issue = $1, location = $2, service_address = $3, service_address_instructions = $4,
+           service_city = $5, service_latitude = $6, service_longitude = $7,
+           description = $8, phone = $9, dispatch_started_at = NOW(), updated_at = NOW()
+       WHERE id = $10 AND customer_id = $11 AND status = 'pending' AND electrician_id IS NULL
+       RETURNING id`,
+      [serviceRequest.issue, serviceRequest.location, serviceRequest.serviceAddress,
+        serviceRequest.addressInstructions, serviceRequest.serviceCity, serviceRequest.latitude,
+        serviceRequest.longitude, serviceRequest.description, serviceRequest.phone,
+        requestId, request.user.id],
+    );
+    if (result.rowCount === 0) {
+      const owned = await pool.query(
+        `SELECT 1 FROM ${schema}.service_requests WHERE id = $1 AND customer_id = $2`,
+        [requestId, request.user.id],
+      );
+      return sendError(response, owned.rowCount ? 409 : 404,
+        owned.rowCount ? "This request has already been assigned and can no longer be edited." : "Request not found.");
+    }
+    response.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete("/api/requests/:id", requireAuth("customer"), async (request, response, next) => {
+  const requestId = request.params.id;
+  if (!/^[1-9]\d{0,18}$/.test(requestId) || BigInt(requestId) > 9223372036854775807n) {
+    return sendError(response, 400, "The request id is invalid.");
+  }
+
+  try {
+    const result = await pool.query(
+      `DELETE FROM ${schema}.service_requests
+       WHERE id = $1 AND customer_id = $2 AND status = 'pending' AND electrician_id IS NULL
+       RETURNING id`,
+      [requestId, request.user.id],
+    );
+    if (result.rowCount === 0) {
+      const owned = await pool.query(
+        `SELECT 1 FROM ${schema}.service_requests WHERE id = $1 AND customer_id = $2`,
+        [requestId, request.user.id],
+      );
+      return sendError(response, owned.rowCount ? 409 : 404,
+        owned.rowCount ? "This request has already been assigned and can no longer be deleted." : "Request not found.");
+    }
+    response.json({ ok: true });
   } catch (error) {
     next(error);
   }

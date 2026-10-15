@@ -56,7 +56,9 @@ async function apiRequest(url, options = {}) {
 
 async function refreshRequests() {
   const data = await apiRequest("/api/requests");
+  const changed = JSON.stringify(requests) !== JSON.stringify(data.requests);
   requests = data.requests;
+  return changed;
 }
 
 function escapeHtml(value = "") {
@@ -253,6 +255,9 @@ function requestRow(request) {
   const changeElectrician = request.status === "accepted"
     ? `<button class="change-electrician-button" type="button" data-action="change-electrician" data-id="${escapeHtml(request.id)}">Change electrician</button>`
     : "";
+  const customerActions = request.status === "pending"
+    ? `<div class="customer-request-actions"><button class="quiet-button" type="button" data-action="edit-request" data-id="${escapeHtml(request.id)}">Edit</button><button class="quiet-button delete-request-button" type="button" data-action="delete-request" data-id="${escapeHtml(request.id)}">Delete</button></div>`
+    : "";
   return `
     <div class="request-row">
       <span class="request-icon">${icons[type?.icon || "general"]}</span>
@@ -261,6 +266,7 @@ function requestRow(request) {
         <div class="request-meta">${escapeHtml(request.location)} &middot; ${escapeHtml(request.serviceAddress)} &middot; ${escapeHtml(request.serviceCity)} &middot; ${escapeHtml(request.date)}</div>
         ${addressInstructions}
         ${electricianDetails}${changeElectrician}
+        ${customerActions}
       </div>
       <span class="status-pill status-${escapeHtml(request.status)}">${statusLabel(request.status)}</span>
     </div>`;
@@ -524,7 +530,7 @@ function openPasswordReset(portal, email = "", showCodeForm = false) {
   </section>`);
 }
 
-function openRequestForm(presetIssue = "") {
+function openRequestForm(presetIssue = "", existingRequest = null) {
   if (!session) {
     openAuth("customer", "login");
     showToast("Please register first, then log in to raise a request.");
@@ -534,23 +540,32 @@ function openRequestForm(presetIssue = "") {
     showToast("Customer accounts can raise service requests.");
     return;
   }
-  const options = serviceTypes.map((type) => `<option value="${escapeHtml(type.name)}" ${presetIssue === type.name ? "selected" : ""}>${escapeHtml(type.name)}</option>`).join("");
+  const selectedIssue = existingRequest?.issue || presetIssue;
+  const options = serviceTypes.map((type) => `<option value="${escapeHtml(type.name)}" ${selectedIssue === type.name ? "selected" : ""}>${escapeHtml(type.name)}</option>`).join("");
+  const extraIssue = selectedIssue && selectedIssue !== "Other electrical issue" &&
+    !serviceTypes.some((type) => type.name === selectedIssue)
+    ? `<option value="${escapeHtml(selectedIssue)}" selected>${escapeHtml(selectedIssue)}</option>`
+    : "";
   openModal(`<section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
-    <div class="modal-heading"><div><h2 id="modal-title">Raise a service request</h2><p>Tell us what’s wrong and an electrician will get back to you.</p></div><button class="close-button" type="button" data-action="close-modal" aria-label="Close">&times;</button></div>
-    <form id="request-form" class="form-grid">
-      <div class="field"><label for="issue">What needs fixing?</label><select id="issue" name="issue" required><option value="">Choose an issue</option>${options}<option value="Other electrical issue">Other electrical issue</option></select></div>
-      <div class="field"><label for="location">Where in the home is the issue?</label><input id="location" name="location" type="text" placeholder="e.g. Kitchen, second floor" required maxlength="100"></div>
-      <div class="field"><label for="service-address">Service address</label><input id="service-address" name="serviceAddress" type="text" placeholder="Street address and building" autocomplete="street-address" required maxlength="250"></div>
-      <div class="field"><label for="address-instructions">Address instructions <span class="form-hint">(optional)</span></label><textarea id="address-instructions" name="addressInstructions" placeholder="Add directions, gate or entry details, landmarks, or anything else helpful." maxlength="500"></textarea></div>
-      <div class="field"><label for="service-city">City</label><input id="service-city" name="serviceCity" type="text" placeholder="City where service is needed" autocomplete="address-level2" required maxlength="120"></div>
+    <div class="modal-heading"><div><h2 id="modal-title">${existingRequest ? "Edit your service request" : "Raise a service request"}</h2><p>${existingRequest ? "Update the details while the request is still unassigned." : "Tell us what’s wrong and an electrician will get back to you."}</p></div><button class="close-button" type="button" data-action="close-modal" aria-label="Close">&times;</button></div>
+    <form id="request-form" class="form-grid" ${existingRequest ? `data-id="${escapeHtml(existingRequest.id)}"` : ""}>
+      <div class="field"><label for="issue">What needs fixing?</label><select id="issue" name="issue" required><option value="">Choose an issue</option>${options}${extraIssue}<option value="Other electrical issue" ${selectedIssue === "Other electrical issue" ? "selected" : ""}>Other electrical issue</option></select></div>
+      <div class="field"><label for="location">Where in the home is the issue?</label><input id="location" name="location" type="text" placeholder="e.g. Kitchen, second floor" required maxlength="100" value="${escapeHtml(existingRequest?.location || "")}"></div>
+      <div class="field"><label for="service-address">Service address</label><input id="service-address" name="serviceAddress" type="text" placeholder="Street address and building" autocomplete="street-address" required maxlength="250" value="${escapeHtml(existingRequest?.serviceAddress || "")}"></div>
+      <div class="field"><label for="address-instructions">Address instructions <span class="form-hint">(optional)</span></label><textarea id="address-instructions" name="addressInstructions" placeholder="Add directions, gate or entry details, landmarks, or anything else helpful." maxlength="500">${escapeHtml(existingRequest?.addressInstructions || "")}</textarea></div>
+      <div class="field"><label for="service-city">City</label><input id="service-city" name="serviceCity" type="text" placeholder="City where service is needed" autocomplete="address-level2" required maxlength="120" value="${escapeHtml(existingRequest?.serviceCity || "")}"></div>
       ${locationPickerMarkup("request-form")}
-      <input type="hidden" name="latitude">
-      <input type="hidden" name="longitude">
-      <div class="field"><label for="description">Tell us a little more <span class="form-hint">(optional)</span></label><textarea id="description" name="description" placeholder="For example: the fan switch in the main bedroom doesn't turn on the fan." maxlength="1000"></textarea></div>
-      <div class="field"><label for="phone">Phone number <span class="form-hint">(optional)</span></label><input id="phone" name="phone" type="tel" placeholder="So your electrician can reach you" maxlength="30"></div>
-      <div class="modal-footer"><button class="secondary-button" type="button" data-action="close-modal">Cancel</button><button class="primary-button" type="submit">Send request</button></div>
+      <input type="hidden" name="latitude" value="${existingRequest?.latitude ?? ""}">
+      <input type="hidden" name="longitude" value="${existingRequest?.longitude ?? ""}">
+      <div class="field"><label for="description">Tell us a little more <span class="form-hint">(optional)</span></label><textarea id="description" name="description" placeholder="For example: the fan switch in the main bedroom doesn't turn on the fan." maxlength="1000">${escapeHtml(existingRequest?.description || "")}</textarea></div>
+      <div class="field"><label for="phone">Phone number <span class="form-hint">(optional)</span></label><input id="phone" name="phone" type="tel" placeholder="So your electrician can reach you" maxlength="30" value="${escapeHtml(existingRequest?.phone || "")}"></div>
+      <div class="modal-footer"><button class="secondary-button" type="button" data-action="close-modal">Cancel</button><button class="primary-button" type="submit">${existingRequest ? "Save changes" : "Send request"}</button></div>
     </form>
   </section>`);
+  if (existingRequest) {
+    const form = document.getElementById("request-form");
+    updateMapMarker(form, existingRequest.latitude, existingRequest.longitude);
+  }
 }
 
 function openAcceptanceForm(id) {
@@ -582,6 +597,37 @@ function confirmChangeElectrician(id) {
     <div class="modal-heading"><div><h2 id="modal-title">Change electrician?</h2><p>Your request will be offered to another electrician. The current electrician won’t be assigned to it again.</p></div><button class="close-button" type="button" data-action="close-modal" aria-label="Close">&times;</button></div>
     <div class="modal-footer"><button class="secondary-button" type="button" data-action="close-modal">Keep electrician</button><button class="primary-button" type="button" data-action="confirm-change-electrician" data-id="${escapeHtml(id)}">Find another electrician</button></div>
   </section>`);
+}
+
+function confirmDeleteRequest(id) {
+  const request = requests.find((item) => item.id === id);
+  if (!request) return;
+  openModal(`<section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-heading"><div><h2 id="modal-title">Delete this request?</h2><p>“${escapeHtml(request.issue)}” will be permanently removed. You can only delete a request before an electrician accepts it.</p></div><button class="close-button" type="button" data-action="close-modal" aria-label="Close">&times;</button></div>
+    <div class="modal-footer"><button class="secondary-button" type="button" data-action="close-modal">Keep request</button><button class="primary-button delete-confirm-button" type="button" data-action="confirm-delete-request" data-id="${escapeHtml(id)}">Delete request</button></div>
+  </section>`);
+}
+
+async function deleteRequest(id) {
+  try {
+    await apiRequest(`/api/requests/${encodeURIComponent(id)}`, { method: "DELETE" });
+    await refreshRequests();
+    closeModal();
+    render();
+    showToast("Request deleted.");
+  } catch (error) {
+    console.error("Could not delete the service request:", error);
+    if (error.status === 409) {
+      try {
+        await refreshRequests();
+      } catch (refreshError) {
+        console.error("Could not refresh requests after a delete conflict:", refreshError);
+      }
+      closeModal();
+      render();
+    }
+    showToast(error.message);
+  }
 }
 
 async function respondToRequest(id, status) {
@@ -653,6 +699,12 @@ document.addEventListener("click", async (event) => {
   if (action === "close-modal") closeModal();
   if (action === "new-request") openRequestForm();
   if (action === "quick-request") openRequestForm(button.dataset.issue);
+  if (action === "edit-request") {
+    const request = requests.find((item) => item.id === button.dataset.id);
+    if (request?.status === "pending") openRequestForm("", request);
+  }
+  if (action === "delete-request") confirmDeleteRequest(button.dataset.id);
+  if (action === "confirm-delete-request") deleteRequest(button.dataset.id);
   if (action === "my-requests") setView("requests");
   if (action === "respond") respondToRequest(button.dataset.id, button.dataset.status);
   if (action === "change-electrician") confirmChangeElectrician(button.dataset.id);
@@ -823,14 +875,29 @@ document.addEventListener("submit", async (event) => {
       phone: String(formData.get("phone")).trim(),
     };
     try {
-      await apiRequest("/api/requests", { method: "POST", body: JSON.stringify(request) });
+      const requestId = event.target.dataset.id;
+      await apiRequest(requestId ? `/api/requests/${encodeURIComponent(requestId)}` : "/api/requests", {
+        method: requestId ? "PUT" : "POST",
+        body: JSON.stringify(request),
+      });
       await refreshRequests();
       closeModal();
-      activeView = "home";
+      if (!requestId) activeView = "home";
       render();
-      showToast("Request sent. An electrician will review it shortly.");
+      showToast(requestId
+        ? "Request updated. Electricians will see the latest details."
+        : "Request sent. An electrician will review it shortly.");
     } catch (error) {
       console.error("Could not send service request:", error);
+      if (requestId && error.status === 409) {
+        try {
+          await refreshRequests();
+        } catch (refreshError) {
+          console.error("Could not refresh requests after an edit conflict:", refreshError);
+        }
+        closeModal();
+        render();
+      }
       showToast(error.message);
     }
   }
@@ -960,17 +1027,21 @@ async function bootstrap() {
   }
   updateProfile();
   render();
+  let refreshInProgress = false;
   window.setInterval(async () => {
-    if (session?.accountType !== "electrician" || document.hidden ||
-        document.getElementById("modal-backdrop")) return;
+    if (!session || document.hidden || refreshInProgress) return;
+    refreshInProgress = true;
     try {
-      await refreshRequests();
-      render();
+      if (await refreshRequests()) {
+        document.getElementById("notification-dot").classList.remove("hidden");
+        render();
+      }
     } catch (error) {
       console.error("Could not refresh incoming service requests:", error);
-      showToast(error.message);
+    } finally {
+      refreshInProgress = false;
     }
-  }, 60_000);
+  }, 5_000);
 }
 
 bootstrap();

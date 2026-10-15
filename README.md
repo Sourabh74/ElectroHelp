@@ -29,6 +29,8 @@ Email verification and password-reset messages are sent using SMTP. Set `EMAIL_S
 
 The service request form accepts a manually entered address, optional address instructions, or lets the customer find or select the address on an OpenStreetMap map. Selecting a map location sends its coordinates to OpenStreetMap's Nominatim service to resolve the address; the form explains this to the customer. Electricians set their service city and map location in their workspace. Requests are shown only to electricians in the same city: the closest one is offered the request first, and after 15 minutes the request is shown to the rest of the city. Declining or being replaced excludes that electrician from the same request.
 
+Customer and electrician request lists refresh automatically every five seconds while the page is visible. Customers can edit or delete a request while it is pending and has not been assigned; the server rejects edits or deletions if an electrician accepts it at the same time.
+
 When accepting a request, an electrician provides a phone number and estimated resolution time. Customers can view those details and request a different electrician while the job is accepted. Database initialization adds the location and dispatch fields to existing installations.
 
 Database initialization adds location, dispatch, and address-instruction fields to existing installations. Keep `.env` private and do not commit database credentials. Use a dedicated, least-privileged database account for any shared or deployed environment.
