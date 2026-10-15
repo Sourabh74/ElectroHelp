@@ -18,6 +18,9 @@ const serviceTypes = [
 let session = null;
 let requests = [];
 let activeView = "home";
+let registrationDraft = null;
+let resetEmail = "";
+let resetPortal = "customer";
 const locationMaps = new WeakMap();
 const locationMarkers = new WeakMap();
 let activeLocationMap = null;
@@ -419,12 +422,15 @@ function validateAuthForm(form) {
   const email = String(values.get("email") || "").trim();
   const password = String(values.get("password") || "");
 
-  if (!email) errors.email = "Enter your email address.";
-  else if (email.length > 160 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    errors.email = "Enter a valid email address.";
+  if (["register-form", "login-form", "reset-request-form"].includes(form.id)) {
+    if (!email) errors.email = "Enter your email address.";
+    else if (email.length > 160 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      errors.email = "Enter a valid email address.";
+    }
   }
-  if (!password) errors.password = "Enter your password.";
-  else if (password.length < 8 || password.length > 128) {
+  if (["register-form", "login-form", "reset-form"].includes(form.id) && !password) {
+    errors.password = form.id === "reset-form" ? "Enter your new password." : "Enter your password.";
+  } else if (password && (password.length < 8 || password.length > 128)) {
     errors.password = "Password must be between 8 and 128 characters.";
   }
 
@@ -436,11 +442,22 @@ function validateAuthForm(form) {
     if (!confirmPassword) errors.confirmPassword = "Confirm your password.";
     else if (password !== confirmPassword) errors.confirmPassword = "Passwords do not match.";
   }
+  if (["register-otp-form", "reset-form"].includes(form.id)) {
+    const code = String(values.get("code") || "").trim();
+    if (!/^\d{6}$/.test(code)) errors.code = "Enter the 6-digit code sent to your email.";
+  }
+  if (form.id === "reset-form") {
+    const confirmPassword = String(values.get("confirmPassword") || "");
+    if (!confirmPassword) errors.confirmPassword = "Confirm your new password.";
+    else if (password !== confirmPassword) errors.confirmPassword = "Passwords do not match.";
+  }
 
   return errors;
 }
 
 function openAuth(portal, mode, email = "") {
+  registrationDraft = null;
+  resetEmail = "";
   const isRegistration = mode === "register";
   const portalLabel = portal === "electrician" ? "electrician" : "customer";
   const heading = isRegistration ? `Create ${portalLabel} account` : `${portalLabel[0].toUpperCase()}${portalLabel.slice(1)} log in`;
@@ -453,16 +470,57 @@ function openAuth(portal, mode, email = "") {
   const switchAction = isRegistration ? "open-login" : "open-register";
   const switchLabel = isRegistration ? "Already registered? Log in" : "New here? Create an account";
   openModal(`<section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
-    <div class="modal-heading"><div><h2 id="modal-title">${heading}</h2><p>${isRegistration ? "Register first, then log in to continue." : "Log in with the email and password you registered with."}</p></div><button class="close-button" type="button" data-action="close-modal" aria-label="Close">&times;</button></div>
+    <div class="modal-heading"><div><h2 id="modal-title">${heading}</h2><p>${isRegistration ? "Verify your email before creating your account." : "Log in with the email and password you registered with."}</p></div><button class="close-button" type="button" data-action="close-modal" aria-label="Close">&times;</button></div>
     <form id="${isRegistration ? "register-form" : "login-form"}" class="form-grid" data-portal="${portal}" novalidate>
       ${nameField}
       <div class="field"><label for="email">Email address</label><input id="email" name="email" type="email" placeholder="you@example.com" autocomplete="email" value="${escapeHtml(email)}" maxlength="160" aria-describedby="email-error" ${isRegistration && !email ? "autofocus" : ""}><span class="field-error" id="email-error" data-field-error="email" aria-live="polite"></span></div>
       <div class="field"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="${isRegistration ? "new-password" : "current-password"}" maxlength="128" aria-describedby="password-error"><span class="field-error" id="password-error" data-field-error="password" aria-live="polite"></span></div>
       ${confirmationField}
-      <span class="form-hint">Your account and password hash are stored in PostgreSQL. Use a password you don’t use elsewhere.</span>
-      <div class="modal-footer"><button class="primary-button" type="submit">${isRegistration ? "Create account" : "Log in"}</button></div>
+      ${isRegistration ? '<span class="form-hint">We’ll email you a verification code before creating your account.</span>' : '<span class="form-hint">Your password is stored securely. Use a password you don’t use elsewhere.</span>'}
+      <div class="modal-footer"><button class="primary-button" type="submit">${isRegistration ? "Send verification code" : "Log in"}</button></div>
     </form>
+    ${isRegistration ? "" : `<button class="quiet-button auth-switch" type="button" data-action="forgot-password" data-portal="${portal}" data-email="${escapeHtml(email)}">Forgot password?</button>`}
     <button class="quiet-button auth-switch" type="button" data-action="${switchAction}" data-portal="${portal}" data-email="${escapeHtml(email)}">${switchLabel}</button>
+  </section>`);
+}
+
+function openRegistrationOtp() {
+  const { email } = registrationDraft;
+  openModal(`<section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-heading"><div><h2 id="modal-title">Verify your email</h2><p>Enter the 6-digit code we sent to ${escapeHtml(email)}. The code expires in 10 minutes.</p></div><button class="close-button" type="button" data-action="close-modal" aria-label="Close">&times;</button></div>
+    <form id="register-otp-form" class="form-grid" novalidate>
+      <div class="field"><label for="code">Verification code</label><input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" aria-describedby="code-error" autofocus><span class="field-error" id="code-error" data-field-error="code" aria-live="polite"></span></div>
+      <div class="modal-footer"><button class="primary-button" type="submit">Verify and create account</button></div>
+    </form>
+    <button class="quiet-button auth-switch" type="button" data-action="register-resend-code">Send a new code</button>
+  </section>`);
+}
+
+function openPasswordReset(portal, email = "", showCodeForm = false) {
+  resetPortal = portal;
+  if (showCodeForm) {
+    openModal(`<section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <div class="modal-heading"><div><h2 id="modal-title">Choose a new password</h2><p>If an account exists for ${escapeHtml(resetEmail)}, a verification code was sent. Enter that code and your new password.</p></div><button class="close-button" type="button" data-action="close-modal" aria-label="Close">&times;</button></div>
+      <form id="reset-form" class="form-grid" novalidate>
+        <div class="field"><label for="code">Verification code</label><input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" aria-describedby="code-error" autofocus><span class="field-error" id="code-error" data-field-error="code" aria-live="polite"></span></div>
+        <div class="field"><label for="password">New password</label><input id="password" name="password" type="password" autocomplete="new-password" maxlength="128" aria-describedby="password-error"><span class="field-error" id="password-error" data-field-error="password" aria-live="polite"></span></div>
+        <div class="field"><label for="confirm-password">Confirm new password</label><input id="confirm-password" name="confirmPassword" type="password" autocomplete="new-password" maxlength="128" aria-describedby="confirmPassword-error"><span class="field-error" id="confirmPassword-error" data-field-error="confirmPassword" aria-live="polite"></span></div>
+        <div class="modal-footer"><button class="primary-button" type="submit">Reset password</button></div>
+      </form>
+      <button class="quiet-button auth-switch" type="button" data-action="reset-resend-code">Send a new code</button>
+      <button class="quiet-button auth-switch" type="button" data-action="back-to-login">Back to log in</button>
+    </section>`);
+    return;
+  }
+
+  resetEmail = email.trim().toLowerCase();
+  openModal(`<section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-heading"><div><h2 id="modal-title">Reset your password</h2><p>We’ll email you a code to verify your address.</p></div><button class="close-button" type="button" data-action="close-modal" aria-label="Close">&times;</button></div>
+    <form id="reset-request-form" class="form-grid" novalidate>
+      <div class="field"><label for="email">Email address</label><input id="email" name="email" type="email" placeholder="you@example.com" autocomplete="email" value="${escapeHtml(email)}" maxlength="160" aria-describedby="email-error" autofocus><span class="field-error" id="email-error" data-field-error="email" aria-live="polite"></span></div>
+      <div class="modal-footer"><button class="primary-button" type="submit">Send reset code</button></div>
+    </form>
+    <button class="quiet-button auth-switch" type="button" data-action="back-to-login">Back to log in</button>
   </section>`);
 }
 
@@ -559,12 +617,38 @@ async function changeElectrician(id) {
   }
 }
 
-document.addEventListener("click", (event) => {
+document.addEventListener("click", async (event) => {
   const button = event.target.closest("[data-action]");
   if (!button) return;
   const { action } = button.dataset;
   if (action === "open-register") openAuth(button.dataset.portal, "register", button.dataset.email || "");
   if (action === "open-login") openAuth(button.dataset.portal, "login", button.dataset.email || "");
+  if (action === "forgot-password") openPasswordReset(button.dataset.portal, button.dataset.email || "");
+  if (action === "back-to-login") openAuth(resetPortal, "login", resetEmail);
+  if (action === "register-resend-code" && registrationDraft) {
+    try {
+      await apiRequest("/api/auth/register/send-code", {
+        method: "POST",
+        body: JSON.stringify(registrationDraft),
+      });
+      showToast("A new verification code has been sent.");
+    } catch (error) {
+      console.error("Unable to resend registration verification code:", error);
+      showToast(error.message);
+    }
+  }
+  if (action === "reset-resend-code" && resetEmail) {
+    try {
+      await apiRequest("/api/auth/password-reset/send-code", {
+        method: "POST",
+        body: JSON.stringify({ email: resetEmail }),
+      });
+      showToast("If that email is registered, a new code has been sent.");
+    } catch (error) {
+      console.error("Unable to resend password reset code:", error);
+      showToast(error.message);
+    }
+  }
   if (action === "electrician-portal") openAuth("electrician", "login");
   if (action === "close-modal") closeModal();
   if (action === "new-request") openRequestForm();
@@ -595,22 +679,50 @@ document.addEventListener("submit", async (event) => {
     const validationErrors = validateAuthForm(form);
     setFieldErrors(form, validationErrors);
     if (Object.keys(validationErrors).length > 0) return;
-    const formData = new FormData(event.target);
+    const formData = new FormData(form);
     const email = String(formData.get("email")).trim().toLowerCase();
     const name = String(formData.get("name")).trim();
     const password = String(formData.get("password"));
-    const confirmPassword = String(formData.get("confirmPassword"));
-    const portal = event.target.dataset.portal;
+    const portal = form.dataset.portal;
+    const draft = { name, email, password, accountType: portal };
     try {
-      await apiRequest("/api/auth/register", {
+      await apiRequest("/api/auth/register/send-code", {
         method: "POST",
-        body: JSON.stringify({ name, email, password, accountType: portal }),
+        body: JSON.stringify(draft),
       });
-      closeModal();
-      openAuth(portal, "login", email);
-      showToast("Account registered. Please log in to continue.");
+      registrationDraft = draft;
+      openRegistrationOtp();
+      showToast("A verification code has been sent to your email.");
     } catch (error) {
-      console.error("Unable to register account", error);
+      console.error("Unable to send registration verification code:", error);
+      if (error.fieldErrors) setFieldErrors(form, error.fieldErrors);
+      else showToast(error.message);
+    }
+  }
+  if (event.target.id === "register-otp-form") {
+    event.preventDefault();
+    const form = event.target;
+    const validationErrors = validateAuthForm(form);
+    setFieldErrors(form, validationErrors);
+    if (Object.keys(validationErrors).length > 0) return;
+    if (!registrationDraft) {
+      openAuth("customer", "register");
+      showToast("Please enter your registration details again.");
+      return;
+    }
+    const code = String(new FormData(form).get("code")).trim();
+    try {
+      await apiRequest("/api/auth/register/verify-code", {
+        method: "POST",
+        body: JSON.stringify({ ...registrationDraft, code }),
+      });
+      const { accountType, email } = registrationDraft;
+      registrationDraft = null;
+      closeModal();
+      openAuth(accountType, "login", email);
+      showToast("Email verified and account created. Please log in.");
+    } catch (error) {
+      console.error("Unable to verify registration code:", error);
       if (error.fieldErrors) setFieldErrors(form, error.fieldErrors);
       else showToast(error.message);
     }
@@ -639,6 +751,52 @@ document.addEventListener("submit", async (event) => {
       showToast(`Welcome back, ${session.name.split(" ")[0]}!`);
     } catch (error) {
       console.error("Unable to log in", error);
+      if (error.fieldErrors) setFieldErrors(form, error.fieldErrors);
+      else showToast(error.message);
+    }
+  }
+  if (event.target.id === "reset-request-form") {
+    event.preventDefault();
+    const form = event.target;
+    const validationErrors = validateAuthForm(form);
+    setFieldErrors(form, validationErrors);
+    if (Object.keys(validationErrors).length > 0) return;
+    const email = String(new FormData(form).get("email")).trim().toLowerCase();
+    try {
+      await apiRequest("/api/auth/password-reset/send-code", {
+        method: "POST",
+        body: JSON.stringify({ email }),
+      });
+      resetEmail = email;
+      openPasswordReset(resetPortal, email, true);
+      showToast("If that email is registered, a reset code has been sent.");
+    } catch (error) {
+      console.error("Unable to send password reset code:", error);
+      if (error.fieldErrors) setFieldErrors(form, error.fieldErrors);
+      else showToast(error.message);
+    }
+  }
+  if (event.target.id === "reset-form") {
+    event.preventDefault();
+    const form = event.target;
+    const validationErrors = validateAuthForm(form);
+    setFieldErrors(form, validationErrors);
+    if (Object.keys(validationErrors).length > 0) return;
+    const formData = new FormData(form);
+    const code = String(formData.get("code")).trim();
+    const password = String(formData.get("password"));
+    try {
+      await apiRequest("/api/auth/password-reset/confirm", {
+        method: "POST",
+        body: JSON.stringify({ email: resetEmail, code, password }),
+      });
+      const email = resetEmail;
+      resetEmail = "";
+      closeModal();
+      openAuth(resetPortal, "login", email);
+      showToast("Password updated. Please log in with your new password.");
+    } catch (error) {
+      console.error("Unable to reset password:", error);
       if (error.fieldErrors) setFieldErrors(form, error.fieldErrors);
       else showToast(error.message);
     }
