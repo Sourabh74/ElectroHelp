@@ -103,7 +103,11 @@ a { color: inherit; text-decoration: none; }
 .request-title { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; font-size: 11px; font-weight: 700; }
 .request-meta { color: var(--muted); font-size: 10px; }
 .request-row .request-meta, .incoming-top .request-meta { line-height: 1.5; }
-.request-assignment { margin-top: 6px; color: #536a57; font-size: 10px; line-height: 1.5; }
+.request-address-instructions { margin: 4px 0 0; color: #70776e; font-size: 10px; line-height: 1.5; white-space: pre-line; }
+.incoming-address-instructions { margin: 9px 0 11px 49px; }
+.request-assignment { display: flex; align-items: center; gap: 6px; margin-top: 6px; color: #536a57; font-size: 10px; line-height: 1.5; }
+.electrician-mark { display: inline-grid; width: 17px; height: 17px; flex: 0 0 auto; place-items: center; border-radius: 5px; background: var(--green); color: #fff; vertical-align: middle; }
+.electrician-mark svg { width: 12px; height: 12px; fill: currentColor; }
 .request-assignment a { color: var(--green); font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
 .change-electrician-button { display: block; margin-top: 6px; padding: 0; border: 0; background: none; color: #6e756d; font-size: 9px; font-weight: 600; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .status-pill { display: inline-flex; align-items: center; gap: 5px; width: max-content; padding: 5px 8px; border-radius: 20px; background: #f4f2eb; color: #8a7646; font-size: 9px; font-weight: 700; white-space: nowrap; }
@@ -233,7 +237,7 @@ a { color: inherit; text-decoration: none; }
   .request-title { flex-wrap: wrap; gap: 5px; }
   .request-row > .status-pill { font-size: 8px; padding: 4px 6px; }
   .incoming-card { padding: 14px 12px; }
-  .incoming-description, .incoming-footer { margin-left: 0; }
+  .incoming-description, .incoming-footer, .incoming-address-instructions { margin-left: 0; }
   .incoming-footer { align-items: flex-start; flex-direction: column; }
   .auth-actions { flex-direction: column; }
   .auth-actions button { width: 100%; }
