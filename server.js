@@ -2,6 +2,7 @@ const crypto = require("node:crypto");
 const { promisify } = require("node:util");
 const path = require("node:path");
 const express = require("express");
+const nodemailer = require("nodemailer");
 const config = require("./server/config");
 const { pool, initializeDatabase } = require("./server/db");
 
@@ -102,8 +103,25 @@ function validateRegistration({ name, email, password, accountType }) {
 
 function emailOtpConfigured() {
   return Boolean(config.email.otpSecret && config.email.otpSecret.length >= 32 &&
-    config.email.resendApiKey && config.email.from);
+    config.email.smtp.host && config.email.smtp.user &&
+    config.email.smtp.password && config.email.from);
 }
+
+const emailTransport = config.email.smtp.host && config.email.smtp.user && config.email.smtp.password
+  ? nodemailer.createTransport({
+    host: config.email.smtp.host,
+    port: config.email.smtp.port,
+    secure: config.email.smtp.secure,
+    requireTLS: !config.email.smtp.secure,
+    auth: {
+      user: config.email.smtp.user,
+      pass: config.email.smtp.password,
+    },
+    connectionTimeout: 15_000,
+    greetingTimeout: 15_000,
+    socketTimeout: 15_000,
+  })
+  : null;
 
 function createOtpHash(email, purpose, code, salt) {
   return crypto.createHmac("sha256", config.email.otpSecret)
@@ -113,26 +131,13 @@ function createOtpHash(email, purpose, code, salt) {
 
 async function sendOtpEmail(email, purpose, code) {
   const isRegistration = purpose === "registration";
-  const response = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${config.email.resendApiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      from: config.email.from,
-      to: [email],
-      subject: isRegistration ? "Verify your ElectroHelp email" : "Reset your ElectroHelp password",
-      text: `Your ElectroHelp verification code is ${code}. It expires in 10 minutes. If you did not request this, you can ignore this email.`,
-      html: `<p>Your ElectroHelp verification code is:</p><p style="font-size:24px;font-weight:bold;letter-spacing:6px">${code}</p><p>It expires in 10 minutes. If you did not request this, you can ignore this email.</p>`,
-    }),
-    signal: AbortSignal.timeout(15_000),
+  await emailTransport.sendMail({
+    from: config.email.from,
+    to: email,
+    subject: isRegistration ? "Verify your ElectroHelp email" : "Reset your ElectroHelp password",
+    text: `Your ElectroHelp verification code is ${code}. It expires in 10 minutes. If you did not request this, you can ignore this email.`,
+    html: `<p>Your ElectroHelp verification code is:</p><p style="font-size:24px;font-weight:bold;letter-spacing:6px">${code}</p><p>It expires in 10 minutes. If you did not request this, you can ignore this email.</p>`,
   });
-  if (!response.ok) {
-    const error = new Error(`Resend API returned HTTP ${response.status}.`);
-    error.status = response.status;
-    throw error;
-  }
 }
 
 async function issueOtp(email, purpose, shouldSend) {
@@ -297,7 +302,7 @@ app.post("/api/auth/register/send-code", async (request, response, next) => {
   } catch (error) {
     if (error.code === "EMAIL_DELIVERY_FAILED") {
       console.error("Could not send registration verification email:", error.cause);
-      return sendError(response, 502, "We could not send your verification email. Please try again.");
+      return sendError(response, 502, "The email provider rejected this message. Check your SMTP credentials and sender settings, then try again.");
     }
     return next(error);
   }
@@ -382,7 +387,7 @@ app.post("/api/auth/password-reset/send-code", async (request, response, next) =
   } catch (error) {
     if (error.code === "EMAIL_DELIVERY_FAILED") {
       console.error("Could not send password reset email:", error.cause);
-      return sendError(response, 502, "We could not send your verification email. Please try again.");
+      return sendError(response, 502, "The email provider rejected this message. Check your SMTP credentials and sender settings, then try again.");
     }
     return next(error);
   }

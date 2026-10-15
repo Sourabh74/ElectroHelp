@@ -33,6 +33,8 @@ const schema = process.env.DB_SCHEMA || "electrician";
 const sslSetting = process.env.DB_SSL?.toLowerCase();
 const sslCa = process.env.DB_SSL_CA?.trim();
 const sslCaFile = process.env.DB_SSL_CA_FILE?.trim();
+const emailSmtpPort = Number(process.env.EMAIL_SMTP_PORT || 587);
+const emailSmtpSecureSetting = process.env.EMAIL_SMTP_SECURE?.toLowerCase();
 
 if (sslSetting && !["true", "false"].includes(sslSetting)) {
   throw new Error("DB_SSL must be set to true or false.");
@@ -52,6 +54,14 @@ if (!Number.isInteger(dbPort) || dbPort < 1 || dbPort > 65535) {
 
 if (!/^[a-z_][a-z0-9_]*$/i.test(schema)) {
   throw new Error("DB_SCHEMA must be a valid PostgreSQL schema identifier.");
+}
+
+if (!Number.isInteger(emailSmtpPort) || emailSmtpPort < 1 || emailSmtpPort > 65535) {
+  throw new Error("EMAIL_SMTP_PORT must be a valid TCP port.");
+}
+
+if (emailSmtpSecureSetting && !["true", "false"].includes(emailSmtpSecureSetting)) {
+  throw new Error("EMAIL_SMTP_SECURE must be set to true or false.");
 }
 
 module.exports = {
@@ -74,7 +84,15 @@ module.exports = {
   },
   email: {
     otpSecret: process.env.EMAIL_OTP_SECRET?.trim(),
-    resendApiKey: process.env.RESEND_API_KEY?.trim(),
     from: process.env.EMAIL_FROM?.trim(),
+    smtp: {
+      host: process.env.EMAIL_SMTP_HOST?.trim(),
+      port: emailSmtpPort,
+      secure: emailSmtpSecureSetting
+        ? emailSmtpSecureSetting === "true"
+        : emailSmtpPort === 465,
+      user: process.env.EMAIL_SMTP_USER?.trim(),
+      password: process.env.EMAIL_SMTP_PASSWORD,
+    },
   },
 };
