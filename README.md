@@ -25,7 +25,7 @@ Set either `DATABASE_URL` to a PostgreSQL connection URL, or configure `DB_HOST`
 
 New customer and electrician accounts are created only after the email address is verified with a 6-digit code. The code expires after 10 minutes, allows at most five guesses, and can be re-sent once per minute. The login form's **Forgot password?** link sends a code to the account email; successfully changing a password signs out that account's existing sessions.
 
-Configure SMTP delivery in `.env` (or the deployment platform's environment settings) before enabling these flows. Set `EMAIL_OTP_SECRET` to a private, randomly generated value of at least 32 characters, and set `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, and `SMTP_FROM` for your mail provider. `SMTP_USER` and `SMTP_PASS` must either both be set or both be omitted. For local development without mail settings, the rest of the app still runs, but email verification and password reset will return a clear configuration error. Never commit real email or database credentials.
+Email is sent through the Resend HTTPS API, which works on Render Free (outbound SMTP ports are blocked there). Create a Resend account and API key, verify a sending domain, then set `RESEND_API_KEY` and `EMAIL_FROM` (for example, `ElectroHelp <no-reply@your-verified-domain.com>`) in `.env` or your deployment environment. Also set `EMAIL_OTP_SECRET` to a private random value of at least 32 characters. For local development without these settings, the rest of the app still runs, but email verification and password reset return a clear configuration error. Never commit API keys or other credentials.
 
 The service request form accepts a manually entered address, optional address instructions, or lets the customer find or select the address on an OpenStreetMap map. Selecting a map location sends its coordinates to OpenStreetMap's Nominatim service to resolve the address; the form explains this to the customer. Electricians set their service city and map location in their workspace. Requests are shown only to electricians in the same city: the closest one is offered the request first, and after 15 minutes the request is shown to the rest of the city. Declining or being replaced excludes that electrician from the same request.
 
@@ -51,7 +51,8 @@ This is a free-tier demo setup, not production hosting. Free hosting can sleep, 
    - `DB_SSL`: `true`
    - `NODE_ENV`: `production`
    - `EMAIL_OTP_SECRET`: a private random value of at least 32 characters; generate one with the command shown above.
-   - `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, and `SMTP_FROM`: the credentials and sender address for your SMTP provider.
+   - `RESEND_API_KEY`: a Resend API key.
+   - `EMAIL_FROM`: a sender address on a domain verified in Resend, such as `ElectroHelp <no-reply@your-verified-domain.com>`.
    - `PORT` is supplied by Render; do not set it manually.
    - If startup reports `self-signed certificate in certificate chain`, download the database CA certificate from your Supabase project's **Database Settings → SSL Configuration** and add it to the Render service as a secret file named `supabase-prod-ca-2021.crt`. Set `DB_SSL_CA_FILE` to `/etc/secrets/supabase-prod-ca-2021.crt`.
 6. Save the variables and deploy. Open the Render URL and check that `/api/health` returns `{"status":"ok","database":"connected"}`.

@@ -2,7 +2,6 @@ const crypto = require("node:crypto");
 const { promisify } = require("node:util");
 const path = require("node:path");
 const express = require("express");
-const nodemailer = require("nodemailer");
 const config = require("./server/config");
 const { pool, initializeDatabase } = require("./server/db");
 
@@ -103,7 +102,7 @@ function validateRegistration({ name, email, password, accountType }) {
 
 function emailOtpConfigured() {
   return Boolean(config.email.otpSecret && config.email.otpSecret.length >= 32 &&
-    config.email.smtpHost && config.email.smtpFrom);
+    config.email.resendApiKey && config.email.from);
 }
 
 function createOtpHash(email, purpose, code, salt) {
@@ -113,25 +112,27 @@ function createOtpHash(email, purpose, code, salt) {
 }
 
 async function sendOtpEmail(email, purpose, code) {
-  const transporter = nodemailer.createTransport({
-    host: config.email.smtpHost,
-    port: config.email.smtpPort,
-    secure: config.email.smtpSecure,
-    connectionTimeout: 10_000,
-    greetingTimeout: 10_000,
-    socketTimeout: 15_000,
-    ...(config.email.smtpUser ? {
-      auth: { user: config.email.smtpUser, pass: config.email.smtpPass },
-    } : {}),
-  });
   const isRegistration = purpose === "registration";
-  await transporter.sendMail({
-    from: config.email.smtpFrom,
-    to: email,
-    subject: isRegistration ? "Verify your ElectroHelp email" : "Reset your ElectroHelp password",
-    text: `Your ElectroHelp verification code is ${code}. It expires in 10 minutes. If you did not request this, you can ignore this email.`,
-    html: `<p>Your ElectroHelp verification code is:</p><p style="font-size:24px;font-weight:bold;letter-spacing:6px">${code}</p><p>It expires in 10 minutes. If you did not request this, you can ignore this email.</p>`,
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${config.email.resendApiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from: config.email.from,
+      to: [email],
+      subject: isRegistration ? "Verify your ElectroHelp email" : "Reset your ElectroHelp password",
+      text: `Your ElectroHelp verification code is ${code}. It expires in 10 minutes. If you did not request this, you can ignore this email.`,
+      html: `<p>Your ElectroHelp verification code is:</p><p style="font-size:24px;font-weight:bold;letter-spacing:6px">${code}</p><p>It expires in 10 minutes. If you did not request this, you can ignore this email.</p>`,
+    }),
+    signal: AbortSignal.timeout(15_000),
   });
+  if (!response.ok) {
+    const error = new Error(`Resend API returned HTTP ${response.status}.`);
+    error.status = response.status;
+    throw error;
+  }
 }
 
 async function issueOtp(email, purpose, shouldSend) {

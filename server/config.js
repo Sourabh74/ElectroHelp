@@ -33,8 +33,6 @@ const schema = process.env.DB_SCHEMA || "electrician";
 const sslSetting = process.env.DB_SSL?.toLowerCase();
 const sslCa = process.env.DB_SSL_CA?.trim();
 const sslCaFile = process.env.DB_SSL_CA_FILE?.trim();
-const smtpPort = Number(process.env.SMTP_PORT || 587);
-const smtpSecureSetting = process.env.SMTP_SECURE?.toLowerCase();
 
 if (sslSetting && !["true", "false"].includes(sslSetting)) {
   throw new Error("DB_SSL must be set to true or false.");
@@ -50,18 +48,6 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
 
 if (!Number.isInteger(dbPort) || dbPort < 1 || dbPort > 65535) {
   throw new Error("DB_PORT must be a valid TCP port.");
-}
-
-if (!Number.isInteger(smtpPort) || smtpPort < 1 || smtpPort > 65535) {
-  throw new Error("SMTP_PORT must be a valid TCP port.");
-}
-
-if (smtpSecureSetting && !["true", "false"].includes(smtpSecureSetting)) {
-  throw new Error("SMTP_SECURE must be set to true or false.");
-}
-
-if (Boolean(process.env.SMTP_USER) !== Boolean(process.env.SMTP_PASS)) {
-  throw new Error("Set both SMTP_USER and SMTP_PASS, or leave both unset.");
 }
 
 if (!/^[a-z_][a-z0-9_]*$/i.test(schema)) {
@@ -88,11 +74,7 @@ module.exports = {
   },
   email: {
     otpSecret: process.env.EMAIL_OTP_SECRET?.trim(),
-    smtpHost: process.env.SMTP_HOST?.trim(),
-    smtpPort,
-    smtpSecure: smtpSecureSetting === "true" || (!smtpSecureSetting && smtpPort === 465),
-    smtpUser: process.env.SMTP_USER?.trim(),
-    smtpPass: process.env.SMTP_PASS,
-    smtpFrom: process.env.SMTP_FROM?.trim(),
+    resendApiKey: process.env.RESEND_API_KEY?.trim(),
+    from: process.env.EMAIL_FROM?.trim(),
   },
 };
