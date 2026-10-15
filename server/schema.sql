@@ -28,6 +28,17 @@ CREATE TABLE IF NOT EXISTS __SCHEMA__.sessions (
 CREATE INDEX IF NOT EXISTS sessions_expires_at_idx
   ON __SCHEMA__.sessions (expires_at);
 
+CREATE TABLE IF NOT EXISTS __SCHEMA__.email_otp_challenges (
+  email VARCHAR(160) NOT NULL,
+  purpose VARCHAR(16) NOT NULL CHECK (purpose IN ('registration', 'password_reset')),
+  code_salt BYTEA NOT NULL,
+  code_hash BYTEA NOT NULL,
+  attempts SMALLINT NOT NULL DEFAULT 0 CHECK (attempts BETWEEN 0 AND 5),
+  expires_at TIMESTAMPTZ NOT NULL,
+  last_sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (email, purpose)
+);
+
 CREATE TABLE IF NOT EXISTS __SCHEMA__.service_requests (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   customer_id BIGINT NOT NULL REFERENCES __SCHEMA__.accounts(id) ON DELETE CASCADE,

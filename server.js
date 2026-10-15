@@ -2,6 +2,7 @@ const crypto = require("node:crypto");
 const { promisify } = require("node:util");
 const path = require("node:path");
 const express = require("express");
+const nodemailer = require("nodemailer");
 const config = require("./server/config");
 const { pool, initializeDatabase } = require("./server/db");
 
@@ -80,6 +81,122 @@ function validateText(value, maxLength, required = false) {
   return typeof value === "string" && value.length <= maxLength && (!required || value.trim().length > 0);
 }
 
+function validateRegistration({ name, email, password, accountType }) {
+  const fieldErrors = {};
+  if (typeof name !== "string" || !name.trim()) {
+    fieldErrors.name = "Enter your name.";
+  } else if (name.trim().length > 80) {
+    fieldErrors.name = "Your name must be 80 characters or fewer.";
+  }
+  if (typeof email !== "string" || !email.trim()) {
+    fieldErrors.email = "Enter your email address.";
+  } else if (!validateEmail(email.trim())) {
+    fieldErrors.email = "Enter a valid email address.";
+  }
+  if (typeof password !== "string" || !password) {
+    fieldErrors.password = "Enter a password.";
+  } else if (password.length < 8 || password.length > 128) {
+    fieldErrors.password = "Password must be between 8 and 128 characters.";
+  }
+  return fieldErrors;
+}
+
+function emailOtpConfigured() {
+  return Boolean(config.email.otpSecret && config.email.otpSecret.length >= 32 &&
+    config.email.smtpHost && config.email.smtpFrom);
+}
+
+function createOtpHash(email, purpose, code, salt) {
+  return crypto.createHmac("sha256", config.email.otpSecret)
+    .update(`${email}:${purpose}:${salt.toString("hex")}:${code}`)
+    .digest();
+}
+
+async function sendOtpEmail(email, purpose, code) {
+  const transporter = nodemailer.createTransport({
+    host: config.email.smtpHost,
+    port: config.email.smtpPort,
+    secure: config.email.smtpSecure,
+    connectionTimeout: 10_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 15_000,
+    ...(config.email.smtpUser ? {
+      auth: { user: config.email.smtpUser, pass: config.email.smtpPass },
+    } : {}),
+  });
+  const isRegistration = purpose === "registration";
+  await transporter.sendMail({
+    from: config.email.smtpFrom,
+    to: email,
+    subject: isRegistration ? "Verify your ElectroHelp email" : "Reset your ElectroHelp password",
+    text: `Your ElectroHelp verification code is ${code}. It expires in 10 minutes. If you did not request this, you can ignore this email.`,
+    html: `<p>Your ElectroHelp verification code is:</p><p style="font-size:24px;font-weight:bold;letter-spacing:6px">${code}</p><p>It expires in 10 minutes. If you did not request this, you can ignore this email.</p>`,
+  });
+}
+
+async function issueOtp(email, purpose, shouldSend) {
+  const code = String(crypto.randomInt(100000, 1000000));
+  const salt = crypto.randomBytes(16);
+  const codeHash = createOtpHash(email, purpose, code, salt);
+  const result = await pool.query(
+    `INSERT INTO ${schema}.email_otp_challenges AS challenge
+       (email, purpose, code_salt, code_hash, attempts, expires_at, last_sent_at)
+     VALUES ($1, $2, $3, $4, 0, NOW() + INTERVAL '10 minutes', NOW())
+     ON CONFLICT (email, purpose) DO UPDATE
+       SET code_salt = EXCLUDED.code_salt, code_hash = EXCLUDED.code_hash,
+           attempts = 0, expires_at = EXCLUDED.expires_at, last_sent_at = NOW()
+       WHERE challenge.last_sent_at <= NOW() - INTERVAL '60 seconds'
+          OR challenge.expires_at <= NOW()
+     RETURNING email`,
+    [email, purpose, salt, codeHash],
+  );
+  if (result.rowCount === 0) return false;
+  if (shouldSend) {
+    try {
+      await sendOtpEmail(email, purpose, code);
+    } catch (error) {
+      await pool.query(
+        `DELETE FROM ${schema}.email_otp_challenges
+         WHERE email = $1 AND purpose = $2 AND code_hash = $3`,
+        [email, purpose, codeHash],
+      );
+      throw Object.assign(new Error("Email delivery failed.", { cause: error }), {
+        code: "EMAIL_DELIVERY_FAILED",
+      });
+    }
+  }
+  return true;
+}
+
+async function verifyOtp(client, email, purpose, code) {
+  const result = await client.query(
+    `SELECT code_salt, code_hash, attempts, expires_at
+     FROM ${schema}.email_otp_challenges
+     WHERE email = $1 AND purpose = $2
+     FOR UPDATE`,
+    [email, purpose],
+  );
+  if (result.rowCount === 0) return false;
+  const challenge = result.rows[0];
+  if (challenge.attempts >= 5 || new Date(challenge.expires_at) <= new Date()) {
+    await client.query(
+      `DELETE FROM ${schema}.email_otp_challenges WHERE email = $1 AND purpose = $2`,
+      [email, purpose],
+    );
+    return false;
+  }
+  const candidate = createOtpHash(email, purpose, code, challenge.code_salt);
+  if (!crypto.timingSafeEqual(candidate, challenge.code_hash)) {
+    await client.query(
+      `UPDATE ${schema}.email_otp_challenges
+       SET attempts = attempts + 1 WHERE email = $1 AND purpose = $2`,
+      [email, purpose],
+    );
+    return false;
+  }
+  return true;
+}
+
 function mapRequest(row) {
   return {
     id: String(row.id),
@@ -148,23 +265,48 @@ app.get("/api/health", async (request, response, next) => {
   }
 });
 
-app.post("/api/auth/register", async (request, response, next) => {
+app.post("/api/auth/register/send-code", async (request, response, next) => {
   const { name, email, password, accountType } = request.body || {};
-  const fieldErrors = {};
-  if (typeof name !== "string" || !name.trim()) {
-    fieldErrors.name = "Enter your name.";
-  } else if (name.trim().length > 80) {
-    fieldErrors.name = "Your name must be 80 characters or fewer.";
+  const fieldErrors = validateRegistration({ name, email, password, accountType });
+  if (Object.keys(fieldErrors).length > 0) {
+    return response.status(400).json({ error: "Please correct the highlighted fields.", fieldErrors });
   }
-  if (typeof email !== "string" || !email.trim()) {
-    fieldErrors.email = "Enter your email address.";
-  } else if (!validateEmail(email.trim())) {
-    fieldErrors.email = "Enter a valid email address.";
+  if (accountType !== "electrician" && accountType !== "customer") {
+    return sendError(response, 400, "Only customer/electrician accounts can be created here.");
   }
-  if (typeof password !== "string" || !password) {
-    fieldErrors.password = "Enter a password.";
-  } else if (password.length < 8 || password.length > 128) {
-    fieldErrors.password = "Password must be between 8 and 128 characters.";
+  if (!emailOtpConfigured()) {
+    return sendError(response, 503, "Email verification is not configured. Please contact the site administrator.");
+  }
+
+  try {
+    const normalizedEmail = email.trim().toLowerCase();
+    const existing = await pool.query(
+      `SELECT 1 FROM ${schema}.accounts WHERE email = $1`,
+      [normalizedEmail],
+    );
+    if (existing.rowCount > 0) {
+      return response.status(409).json({
+        error: "An account with this email already exists.",
+        fieldErrors: { email: "An account with this email already exists." },
+      });
+    }
+    const sent = await issueOtp(normalizedEmail, "registration", true);
+    if (!sent) return sendError(response, 429, "Please wait a minute before requesting another code.");
+    response.json({ ok: true });
+  } catch (error) {
+    if (error.code === "EMAIL_DELIVERY_FAILED") {
+      console.error("Could not send registration verification email:", error.cause);
+      return sendError(response, 502, "We could not send your verification email. Please try again.");
+    }
+    return next(error);
+  }
+});
+
+app.post("/api/auth/register/verify-code", async (request, response, next) => {
+  const { name, email, password, accountType, code } = request.body || {};
+  const fieldErrors = validateRegistration({ name, email, password, accountType });
+  if (typeof code !== "string" || !/^\d{6}$/.test(code)) {
+    fieldErrors.code = "Enter the 6-digit code sent to your email.";
   }
   if (Object.keys(fieldErrors).length > 0) {
     return response.status(400).json({ error: "Please correct the highlighted fields.", fieldErrors });
@@ -172,19 +314,37 @@ app.post("/api/auth/register", async (request, response, next) => {
   if (accountType !== "electrician" && accountType !== "customer") {
     return sendError(response, 400, "Only customer/electrician accounts can be created here.");
   }
+  if (!emailOtpConfigured()) {
+    return sendError(response, 503, "Email verification is not configured. Please contact the site administrator.");
+  }
 
+  const normalizedEmail = email.trim().toLowerCase();
+  const client = await pool.connect();
   try {
-    const normalizedEmail = email.trim().toLowerCase();
+    await client.query("BEGIN");
+    if (!await verifyOtp(client, normalizedEmail, "registration", code)) {
+      await client.query("COMMIT");
+      return response.status(400).json({
+        error: "That code is invalid or expired. Request a new code and try again.",
+        fieldErrors: { code: "That code is invalid or expired." },
+      });
+    }
     const salt = crypto.randomBytes(16);
     const passwordHash = await scrypt(password, salt, 64);
-    const result = await pool.query(
+    const result = await client.query(
       `INSERT INTO ${schema}.accounts (name, email, account_type, password_salt, password_hash)
        VALUES ($1, $2, $3, $4, $5)
        RETURNING id, name, email, account_type`,
       [name.trim(), normalizedEmail, accountType, salt, passwordHash],
     );
+    await client.query(
+      `DELETE FROM ${schema}.email_otp_challenges WHERE email = $1 AND purpose = 'registration'`,
+      [normalizedEmail],
+    );
+    await client.query("COMMIT");
     response.status(201).json({ user: publicAccount(result.rows[0]) });
   } catch (error) {
+    await client.query("ROLLBACK");
     if (error.code === "23505") {
       return response.status(409).json({
         error: "An account with this email already exists.",
@@ -192,6 +352,104 @@ app.post("/api/auth/register", async (request, response, next) => {
       });
     }
     return next(error);
+  } finally {
+    client.release();
+  }
+});
+
+app.post("/api/auth/password-reset/send-code", async (request, response, next) => {
+  const { email } = request.body || {};
+  if (typeof email !== "string" || !validateEmail(email.trim())) {
+    return response.status(400).json({
+      error: "Please enter a valid email address.",
+      fieldErrors: { email: "Enter a valid email address." },
+    });
+  }
+  if (!emailOtpConfigured()) {
+    return sendError(response, 503, "Email verification is not configured. Please contact the site administrator.");
+  }
+
+  try {
+    const normalizedEmail = email.trim().toLowerCase();
+    const account = await pool.query(
+      `SELECT 1 FROM ${schema}.accounts WHERE email = $1`,
+      [normalizedEmail],
+    );
+    const sent = await issueOtp(normalizedEmail, "password_reset", account.rowCount > 0);
+    if (!sent) return sendError(response, 429, "Please wait a minute before requesting another code.");
+    response.json({ ok: true });
+  } catch (error) {
+    if (error.code === "EMAIL_DELIVERY_FAILED") {
+      console.error("Could not send password reset email:", error.cause);
+      return sendError(response, 502, "We could not send your verification email. Please try again.");
+    }
+    return next(error);
+  }
+});
+
+app.post("/api/auth/password-reset/confirm", async (request, response, next) => {
+  const { email, code, password } = request.body || {};
+  const fieldErrors = {};
+  if (typeof email !== "string" || !validateEmail(email.trim())) {
+    fieldErrors.email = "Enter a valid email address.";
+  }
+  if (typeof code !== "string" || !/^\d{6}$/.test(code)) {
+    fieldErrors.code = "Enter the 6-digit code sent to your email.";
+  }
+  if (typeof password !== "string" || password.length < 8 || password.length > 128) {
+    fieldErrors.password = "Password must be between 8 and 128 characters.";
+  }
+  if (Object.keys(fieldErrors).length > 0) {
+    return response.status(400).json({ error: "Please correct the highlighted fields.", fieldErrors });
+  }
+  if (!emailOtpConfigured()) {
+    return sendError(response, 503, "Email verification is not configured. Please contact the site administrator.");
+  }
+
+  const normalizedEmail = email.trim().toLowerCase();
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    if (!await verifyOtp(client, normalizedEmail, "password_reset", code)) {
+      await client.query("COMMIT");
+      return response.status(400).json({
+        error: "That code is invalid or expired. Request a new code and try again.",
+        fieldErrors: { code: "That code is invalid or expired." },
+      });
+    }
+    const account = await client.query(
+      `SELECT id FROM ${schema}.accounts WHERE email = $1 FOR UPDATE`,
+      [normalizedEmail],
+    );
+    if (account.rowCount === 0) {
+      await client.query(
+        `DELETE FROM ${schema}.email_otp_challenges WHERE email = $1 AND purpose = 'password_reset'`,
+        [normalizedEmail],
+      );
+      await client.query("COMMIT");
+      return sendError(response, 400, "That code is invalid or expired. Request a new code and try again.");
+    }
+    const salt = crypto.randomBytes(16);
+    const passwordHash = await scrypt(password, salt, 64);
+    await client.query(
+      `UPDATE ${schema}.accounts SET password_salt = $1, password_hash = $2 WHERE id = $3`,
+      [salt, passwordHash, account.rows[0].id],
+    );
+    await client.query(
+      `DELETE FROM ${schema}.sessions WHERE account_id = $1`,
+      [account.rows[0].id],
+    );
+    await client.query(
+      `DELETE FROM ${schema}.email_otp_challenges WHERE email = $1 AND purpose = 'password_reset'`,
+      [normalizedEmail],
+    );
+    await client.query("COMMIT");
+    response.json({ ok: true });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    return next(error);
+  } finally {
+    client.release();
   }
 });
 
