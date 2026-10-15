@@ -110,6 +110,11 @@ a { color: inherit; text-decoration: none; }
 .electrician-mark svg { width: 12px; height: 12px; fill: currentColor; }
 .request-assignment a { color: var(--green); font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
 .change-electrician-button { display: block; margin-top: 6px; padding: 0; border: 0; background: none; color: #6e756d; font-size: 9px; font-weight: 600; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.customer-request-actions { display: flex; gap: 12px; margin-top: 6px; }
+.customer-request-actions .quiet-button { padding: 0; }
+.customer-request-actions .delete-request-button { color: #ad6155; }
+.delete-confirm-button { border-color: #ad6155; background: #ad6155; }
+.delete-confirm-button:hover { background: #934f45; }
 .status-pill { display: inline-flex; align-items: center; gap: 5px; width: max-content; padding: 5px 8px; border-radius: 20px; background: #f4f2eb; color: #8a7646; font-size: 9px; font-weight: 700; white-space: nowrap; }
 .status-pill::before { width: 5px; height: 5px; border-radius: 50%; background: currentColor; content: ""; }
 .status-accepted { background: #eaf3eb; color: #42734e; }
