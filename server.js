@@ -89,6 +89,7 @@ function mapRequest(row) {
     phone: row.phone,
     status: row.status,
     serviceAddress: row.service_address,
+    addressInstructions: row.service_address_instructions,
     serviceCity: row.service_city,
     customerName: row.customer_name,
     customerEmail: row.customer_email,
@@ -101,7 +102,8 @@ function mapRequest(row) {
 }
 
 const requestColumns = `r.id, r.issue, r.location, r.description, r.phone, r.status,
-  r.electrician_phone, r.estimated_resolution, r.service_address, r.service_city,
+  r.electrician_phone, r.estimated_resolution, r.service_address,
+  r.service_address_instructions, r.service_city,
   r.created_at, r.dispatch_started_at,
   a.name AS customer_name, a.email AS customer_email, e.name AS electrician_name`;
 const requestJoins = `JOIN ${schema}.accounts a ON a.id = r.customer_id
@@ -332,10 +334,12 @@ app.get("/api/requests", requireAuth(), async (request, response, next) => {
 
 app.post("/api/requests", requireAuth("customer"), async (request, response, next) => {
   const {
-    issue, location, serviceAddress, serviceCity, latitude, longitude, description = "", phone = "",
+    issue, location, serviceAddress, addressInstructions = "", serviceCity,
+    latitude, longitude, description = "", phone = "",
   } = request.body || {};
   if (!validateText(issue, 120, true) || !validateText(location, 100, true) ||
       !validateText(serviceAddress, 250, true) || !validateText(serviceCity, 120, true) ||
+      !validateText(addressInstructions, 500) ||
       typeof latitude !== "number" || !Number.isFinite(latitude) || latitude < -90 || latitude > 90 ||
       typeof longitude !== "number" || !Number.isFinite(longitude) || longitude < -180 || longitude > 180 ||
       !validateText(description, 1000) || !validateText(phone, 30)) {
@@ -345,12 +349,12 @@ app.post("/api/requests", requireAuth("customer"), async (request, response, nex
   try {
     const result = await pool.query(
       `INSERT INTO ${schema}.service_requests
-         (customer_id, issue, location, service_address, service_city, service_latitude,
-          service_longitude, description, phone)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         (customer_id, issue, location, service_address, service_address_instructions,
+          service_city, service_latitude, service_longitude, description, phone)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        RETURNING id`,
-      [request.user.id, issue.trim(), location.trim(), serviceAddress.trim(), serviceCity.trim(),
-        latitude, longitude, description.trim(), phone.trim()],
+      [request.user.id, issue.trim(), location.trim(), serviceAddress.trim(), addressInstructions.trim(),
+        serviceCity.trim(), latitude, longitude, description.trim(), phone.trim()],
     );
     const created = await pool.query(
       `SELECT ${requestColumns}

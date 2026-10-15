@@ -242,7 +242,10 @@ function statusLabel(status) {
 function requestRow(request) {
   const type = serviceTypes.find((item) => item.name === request.issue);
   const electricianDetails = request.electricianName
-    ? `<div class="request-assignment">Electrician: ${escapeHtml(request.electricianName)}${request.electricianPhone ? ` &middot; <a href="tel:${escapeHtml(request.electricianPhone)}">${escapeHtml(request.electricianPhone)}</a>` : ""}${request.estimatedResolution ? ` &middot; Estimated time: ${escapeHtml(request.estimatedResolution)}` : ""}</div>`
+    ? `<div class="request-assignment"><span class="electrician-mark" aria-hidden="true">${icons.bolt}</span><span>Electrician: ${escapeHtml(request.electricianName)}${request.electricianPhone ? ` &middot; <a href="tel:${escapeHtml(request.electricianPhone)}">${escapeHtml(request.electricianPhone)}</a>` : ""}${request.estimatedResolution ? ` &middot; Estimated time: ${escapeHtml(request.estimatedResolution)}` : ""}</span></div>`
+    : "";
+  const addressInstructions = request.addressInstructions
+    ? `<div class="request-address-instructions">Address instructions: ${escapeHtml(request.addressInstructions)}</div>`
     : "";
   const changeElectrician = request.status === "accepted"
     ? `<button class="change-electrician-button" type="button" data-action="change-electrician" data-id="${escapeHtml(request.id)}">Change electrician</button>`
@@ -253,6 +256,7 @@ function requestRow(request) {
       <div class="request-main">
         <div class="request-title">${escapeHtml(request.issue)}</div>
         <div class="request-meta">${escapeHtml(request.location)} &middot; ${escapeHtml(request.serviceAddress)} &middot; ${escapeHtml(request.serviceCity)} &middot; ${escapeHtml(request.date)}</div>
+        ${addressInstructions}
         ${electricianDetails}${changeElectrician}
       </div>
       <span class="status-pill status-${escapeHtml(request.status)}">${statusLabel(request.status)}</span>
@@ -342,6 +346,7 @@ function incomingCard(request) {
     : "";
   return `<article class="incoming-card">
     <div class="incoming-top"><span class="request-icon">${icons[type?.icon || "general"]}</span><div class="request-main"><div class="request-title">${escapeHtml(request.issue)} <span class="status-pill status-${escapeHtml(request.status)}">${statusLabel(request.status)}</span></div><div class="request-meta">${escapeHtml(request.location)} &middot; ${escapeHtml(request.serviceAddress)}, ${escapeHtml(request.serviceCity)} &middot; ${escapeHtml(request.date)}</div></div></div>
+    ${request.addressInstructions ? `<p class="request-address-instructions incoming-address-instructions">Address instructions: ${escapeHtml(request.addressInstructions)}</p>` : ""}
     ${request.description ? `<p class="incoming-description">${escapeHtml(request.description)}</p>` : ""}
     ${assignmentDetails}
     <div class="incoming-footer"><span class="customer-name">Requested by ${escapeHtml(request.customerName)}${request.phone ? ` &middot; ${escapeHtml(request.phone)}` : ""}</span>${actions}</div>
@@ -478,6 +483,7 @@ function openRequestForm(presetIssue = "") {
       <div class="field"><label for="issue">What needs fixing?</label><select id="issue" name="issue" required><option value="">Choose an issue</option>${options}<option value="Other electrical issue">Other electrical issue</option></select></div>
       <div class="field"><label for="location">Where in the home is the issue?</label><input id="location" name="location" type="text" placeholder="e.g. Kitchen, second floor" required maxlength="100"></div>
       <div class="field"><label for="service-address">Service address</label><input id="service-address" name="serviceAddress" type="text" placeholder="Street address and building" autocomplete="street-address" required maxlength="250"></div>
+      <div class="field"><label for="address-instructions">Address instructions <span class="form-hint">(optional)</span></label><textarea id="address-instructions" name="addressInstructions" placeholder="Add directions, gate or entry details, landmarks, or anything else helpful." maxlength="500"></textarea></div>
       <div class="field"><label for="service-city">City</label><input id="service-city" name="serviceCity" type="text" placeholder="City where service is needed" autocomplete="address-level2" required maxlength="120"></div>
       ${locationPickerMarkup("request-form")}
       <input type="hidden" name="latitude">
@@ -651,6 +657,7 @@ document.addEventListener("submit", async (event) => {
       issue: String(formData.get("issue")),
       location: String(formData.get("location")).trim(),
       serviceAddress: String(formData.get("serviceAddress")).trim(),
+      addressInstructions: String(formData.get("addressInstructions")).trim(),
       serviceCity: String(formData.get("serviceCity")).trim(),
       latitude,
       longitude,
