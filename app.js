@@ -252,6 +252,9 @@ function requestRow(request) {
   const addressInstructions = request.addressInstructions
     ? `<div class="request-address-instructions">Address instructions: ${escapeHtml(request.addressInstructions)}</div>`
     : "";
+  const availabilityMessage = request.status === "pending" && !request.electricianAvailable
+    ? `<div class="availability-message">No electrician is available in ${escapeHtml(request.serviceCity)} right now. Your request is saved, and we’ll update you if one becomes available.</div>`
+    : "";
   const changeElectrician = request.status === "accepted"
     ? `<button class="change-electrician-button" type="button" data-action="change-electrician" data-id="${escapeHtml(request.id)}">Change electrician</button>`
     : "";
@@ -264,7 +267,7 @@ function requestRow(request) {
       <div class="request-main">
         <div class="request-title">${escapeHtml(request.issue)}</div>
         <div class="request-meta">${escapeHtml(request.location)} &middot; ${escapeHtml(request.serviceAddress)} &middot; ${escapeHtml(request.serviceCity)} &middot; ${escapeHtml(request.date)}</div>
-        ${addressInstructions}
+        ${availabilityMessage}${addressInstructions}
         ${electricianDetails}${changeElectrician}
         ${customerActions}
       </div>

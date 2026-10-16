@@ -220,6 +220,7 @@ function mapRequest(row) {
     customerEmail: row.customer_email,
     electricianName: row.electrician_name,
     electricianPhone: row.electrician_phone,
+    electricianAvailable: row.electrician_available,
     estimatedResolution: row.estimated_resolution,
     createdAt: row.created_at.toISOString(),
     date: new Intl.DateTimeFormat("en", { month: "short", day: "numeric", year: "numeric" }).format(row.created_at),
@@ -230,7 +231,18 @@ const requestColumns = `r.id, r.issue, r.location, r.description, r.phone, r.sta
   r.electrician_phone, r.estimated_resolution, r.service_address,
   r.service_address_instructions, r.service_city, r.service_latitude, r.service_longitude,
   r.created_at, r.dispatch_started_at,
-  a.name AS customer_name, a.email AS customer_email, e.name AS electrician_name`;
+  a.name AS customer_name, a.email AS customer_email, e.name AS electrician_name,
+  EXISTS (
+    SELECT 1 FROM ${schema}.accounts available
+    WHERE available.account_type = 'electrician'
+      AND LOWER(BTRIM(available.service_city)) = LOWER(BTRIM(r.service_city))
+      AND available.service_latitude IS NOT NULL
+      AND available.service_longitude IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM ${schema}.service_request_excluded_electricians x
+        WHERE x.request_id = r.id AND x.electrician_id = available.id
+      )
+  ) AS electrician_available`;
 const requestJoins = `JOIN ${schema}.accounts a ON a.id = r.customer_id
   LEFT JOIN ${schema}.accounts e ON e.id = r.electrician_id`;
 const nearestElectricianId = `(SELECT candidate.id
